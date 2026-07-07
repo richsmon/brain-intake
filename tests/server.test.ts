@@ -1,0 +1,102 @@
+import { mkdtempSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, test } from 'vitest';
+import { appendEvent, readEvents } from '../src/inbox.js';
+import { buildServer } from '../src/server.js';
+
+function tmpBrain(): string {
+  const root = mkdtempSync(join(tmpdir(), 'brain-'));
+  mkdirSync(join(root, 'inbox'));
+  return root;
+}
+
+describe('GET /health', () => {
+  test('reports ok + brainRoot (the app uses this as its reachability probe)', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, brainRoot: root });
+  });
+});
+
+describe('POST /items (JSON: text / share-sheet)', () => {
+  test('creates an inbox item with captured + queued events', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items',
+      payload: { source: 'text', text: 'a thought from the phone', deviceTs: '2026-07-07T10:00:00Z' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const { id, deduped } = res.json();
+    expect(deduped).toBe(false);
+
+    const events = readEvents(join(root, 'inbox', id));
+    expect(events.map((e) => e.event)).toEqual(['captured', 'queued']);
+    expect(events[0]).toMatchObject({ source: 'text', device_ts: '2026-07-07T10:00:00Z' });
+  });
+
+  test('same text twice → deduped', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const payload = { source: 'share-sheet', text: 'https://example.com/article' };
+    const first = (await app.inject({ method: 'POST', url: '/items', payload })).json();
+    const res = await app.inject({ method: 'POST', url: '/items', payload });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ id: first.id, deduped: true });
+  });
+
+  test('rejects missing text and non-JSON sources with 400', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    expect((await app.inject({ method: 'POST', url: '/items', payload: { source: 'text' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: '/items', payload: { source: 'voice', text: 'x' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: '/items', payload: { source: 'nope', text: 'x' } })).statusCode).toBe(400);
+  });
+});
+
+describe('GET /items', () => {
+  test('lists items with state, lastEvent and title from classified', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'listable' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), {
+      event: 'classified', type: 'note', workspace: 'brain', title: 'A listable thought', confidence: 0.9,
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/items' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([
+      { id, state: 'open', lastEvent: 'classified', title: 'A listable thought' },
+    ]);
+  });
+});
+
+describe('GET /items/:id', () => {
+  test('returns the full event trail + payload ref', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'detail me' } })
+    ).json();
+
+    const res = await app.inject({ method: 'GET', url: `/items/${id}` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.id).toBe(id);
+    expect(body.state).toBe('open');
+    expect(body.events.map((e: { event: string }) => e.event)).toEqual(['captured', 'queued']);
+    expect(body.payload).toEqual({ name: 'payload.md', bytes: 'detail me'.length });
+  });
+
+  test('unknown id → 404', async () => {
+    const app = buildServer({ brainRoot: tmpBrain() });
+    expect((await app.inject({ method: 'GET', url: '/items/2026-07-07-deadbeef' })).statusCode).toBe(404);
+  });
+});
