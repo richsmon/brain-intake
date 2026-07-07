@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { appendEvent, itemId, itemState, knownShas, readEvents, utcNow } from '../src/inbox.js';
+import { appendEvent, createItem, itemId, itemState, knownShas, readEvents, utcNow } from '../src/inbox.js';
 
 function tmpItemDir(): string {
   return mkdtempSync(join(tmpdir(), 'inbox-item-'));
@@ -92,5 +92,58 @@ describe('knownShas', () => {
     mkdirSync(join(inbox, 'no-events'));
 
     expect(knownShas(inbox)).toEqual(new Set(['sha-a', 'sha-b']));
+  });
+});
+
+describe('createItem', () => {
+  test('creates inbox/<id>/payload.<ext> + captured/queued events per contract', () => {
+    const inbox = mkdtempSync(join(tmpdir(), 'inbox-'));
+    const res = createItem(inbox, Buffer.from('hello'), {
+      source: 'text',
+      ext: 'md',
+      originalName: 'note.md',
+      deviceTs: '2026-07-07T10:00:00Z',
+    });
+
+    expect(res.deduped).toBe(false);
+    expect(res.id).toMatch(/^\d{4}-\d{2}-\d{2}-2cf24dba$/);
+
+    const dir = join(inbox, res.id);
+    expect(readFileSync(join(dir, 'payload.md'), 'utf-8')).toBe('hello');
+
+    const events = readEvents(dir);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      event: 'captured',
+      source: 'text',
+      sha: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+      original_name: 'note.md',
+      payload: 'payload.md',
+      device_ts: '2026-07-07T10:00:00Z',
+    });
+    expect(events[1]!.event).toBe('queued');
+  });
+
+  test('optional fields are omitted, not null', () => {
+    const inbox = mkdtempSync(join(tmpdir(), 'inbox-'));
+    const res = createItem(inbox, Buffer.from('bare'), { source: 'text', ext: 'md' });
+    const captured = readEvents(join(inbox, res.id))[0]!;
+    expect('original_name' in captured).toBe(false);
+    expect('device_ts' in captured).toBe(false);
+  });
+
+  test('same payload twice → same id, deduped, nothing rewritten', () => {
+    const inbox = mkdtempSync(join(tmpdir(), 'inbox-'));
+    const first = createItem(inbox, Buffer.from('hello'), { source: 'text', ext: 'md' });
+    const second = createItem(inbox, Buffer.from('hello'), { source: 'share-sheet', ext: 'md' });
+
+    expect(second).toEqual({ id: first.id, deduped: true });
+    expect(readEvents(join(inbox, first.id))).toHaveLength(2);
+    expect(readdirSync(inbox).filter((n) => n.startsWith('20'))).toHaveLength(1);
+  });
+
+  test('rejects unknown source', () => {
+    const inbox = mkdtempSync(join(tmpdir(), 'inbox-'));
+    expect(() => createItem(inbox, Buffer.from('x'), { source: 'email', ext: 'md' })).toThrow(/source/);
   });
 });

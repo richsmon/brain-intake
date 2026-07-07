@@ -2,7 +2,7 @@
 // Semantics must stay byte-compatible with tools/brain-loop/intake.py in the
 // brain repo; the contract doc is the single arbiter.
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const EVENT_FILE = 'events.jsonl';
@@ -23,6 +23,55 @@ export function appendEvent(itemDir: string, event: InboxEvent): void {
 }
 
 export const TERMINAL_EVENTS = new Set(['became', 'needs-human']);
+
+export const CAPTURE_SOURCES = new Set(['share-sheet', 'voice', 'text', 'photo']);
+
+export interface CreateItemOptions {
+  source: string;
+  ext: string;
+  originalName?: string;
+  deviceTs?: string;
+}
+
+export interface CreateItemResult {
+  id: string;
+  deduped: boolean;
+}
+
+export function findItemBySha(inboxDir: string, sha: string): string | null {
+  for (const entry of readdirSync(inboxDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    for (const e of readEvents(join(inboxDir, entry.name))) {
+      if (e.event === 'captured' && e.sha === sha) return entry.name;
+    }
+  }
+  return null;
+}
+
+export function createItem(inboxDir: string, payload: Buffer, opts: CreateItemOptions): CreateItemResult {
+  if (!CAPTURE_SOURCES.has(opts.source)) {
+    throw new Error(`unknown source: ${opts.source}`);
+  }
+  const sha = createHash('sha256').update(payload).digest('hex');
+  const existing = findItemBySha(inboxDir, sha);
+  if (existing) return { id: existing, deduped: true };
+
+  const id = itemId(payload, utcNow().slice(0, 10));
+  const dir = join(inboxDir, id);
+  mkdirSync(dir, { recursive: true });
+  const payloadName = `payload.${opts.ext}`;
+  writeFileSync(join(dir, payloadName), payload);
+  appendEvent(dir, {
+    event: 'captured',
+    source: opts.source,
+    sha,
+    ...(opts.originalName !== undefined ? { original_name: opts.originalName } : {}),
+    payload: payloadName,
+    ...(opts.deviceTs !== undefined ? { device_ts: opts.deviceTs } : {}),
+  });
+  appendEvent(dir, { event: 'queued' });
+  return { id, deduped: false };
+}
 
 export type ItemState = 'open' | 'became' | 'needs-human';
 
