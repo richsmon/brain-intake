@@ -5,6 +5,7 @@ export interface AppConfig {
   brainRoot: string;
   port: number;
   bind: string;
+  whisperCmd?: string;
 }
 
 export function loadConfig(env: Record<string, string | undefined>): AppConfig {
@@ -20,5 +21,12 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     if (!Number.isInteger(port) || port <= 0) throw new Error(`PORT must be a positive integer: ${env.PORT}`);
   }
 
-  return { brainRoot, port, bind: env.BIND ?? '127.0.0.1' };
+  return {
+    brainRoot,
+    port,
+    bind: env.BIND ?? '127.0.0.1',
+    ...(env.WHISPER_CMD !== undefined && env.WHISPER_CMD !== ''
+      ? { whisperCmd: env.WHISPER_CMD }
+      : {}),
+  };
 }

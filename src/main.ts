@@ -2,7 +2,10 @@ import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 
 const config = loadConfig(process.env);
-const app = buildServer({ brainRoot: config.brainRoot });
+const app = buildServer({
+  brainRoot: config.brainRoot,
+  ...(config.whisperCmd !== undefined ? { whisperCmd: config.whisperCmd } : {}),
+});
 
 app
   .listen({ port: config.port, host: config.bind })

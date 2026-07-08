@@ -42,3 +42,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ BRAIN_ROOT: tmpBrain(), PORT: 'abc' })).toThrow(/PORT/);
   });
 });
+
+test('WHISPER_CMD flows through; absent or empty leaves it unset', () => {
+  const root = tmpBrain();
+  expect(loadConfig({ BRAIN_ROOT: root, WHISPER_CMD: 'whisper-ctranslate2 --model base {input}' }).whisperCmd).toBe(
+    'whisper-ctranslate2 --model base {input}',
+  );
+  expect(loadConfig({ BRAIN_ROOT: root }).whisperCmd).toBeUndefined();
+  expect(loadConfig({ BRAIN_ROOT: root, WHISPER_CMD: '' }).whisperCmd).toBeUndefined();
+});

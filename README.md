@@ -38,6 +38,29 @@ Capture is idempotent by content hash: re-posting the same payload returns the
 existing item id with `deduped: true` (safe for the app's offline-queue retries).
 Upload cap 25 MB; extensions `jpg|jpeg|png|heic|m4a|mp3|wav`.
 
+## Transcription (BI-06)
+
+Set `WHISPER_CMD` to enable host-side STT for audio captures (`m4a|mp3|wav`).
+The command must print the transcript to stdout; `{input}` is replaced with the
+quoted audio path (appended as the last argument when no placeholder is used).
+On each audio upload the server fires transcription in the background and, when
+the (hallucination-filtered) text is non-empty, writes `transcript.md` beside
+the payload and appends the non-terminal `transcribed` event — the brain's
+intake loop then classifies from the transcript instead of raw audio
+(contract: `inbox/README.md`, amended in universal-brain#28).
+
+Recommended local-first setup (zero API keys, per the brain's design note):
+
+```sh
+pipx install whisper-ctranslate2   # faster-whisper CLI
+WHISPER_CMD="whisper-ctranslate2 --model base --output_format txt --print_text {input}" \
+  BRAIN_ROOT=... npm start
+```
+
+Cloud fallbacks (Groq/OpenAI) stay operator-side `WHISPER_CMD` config — never
+code. Unset = transcription disabled; audio items stay raw and route
+`needs-human` under the text-only loop.
+
 ## Smoke
 
 ```sh
