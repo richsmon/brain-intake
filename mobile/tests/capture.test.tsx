@@ -5,6 +5,25 @@ import { captureText } from "../src/lib/brain";
 
 jest.mock("../src/lib/brain", () => ({
   captureText: jest.fn(async () => undefined),
+  captureFile: jest.fn(async () => ({ ok: true, ext: "jpg" })),
+}));
+
+jest.mock("expo-image-picker", () => ({
+  requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  launchCameraAsync: jest.fn(),
+  launchImageLibraryAsync: jest.fn(),
+}));
+
+jest.mock("expo-audio", () => ({
+  RecordingPresets: { HIGH_QUALITY: {} },
+  requestRecordingPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  useAudioRecorder: () => ({
+    record: jest.fn(),
+    stop: jest.fn(async () => undefined),
+    prepareToRecordAsync: jest.fn(async () => undefined),
+    uri: null,
+    currentTime: 0,
+  }),
 }));
 
 const captureTextMock = captureText as jest.Mock;

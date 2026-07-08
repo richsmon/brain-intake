@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Brainer",
+    "slug": "brain-intake",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "brainer",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -31,6 +31,19 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Brainer records voice notes that your brain-host transcribes locally."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Brainer sends selected photos to your brain inbox.",
+          "cameraPermission": "Brainer captures photos straight into your brain inbox."
         }
       ]
     ],
