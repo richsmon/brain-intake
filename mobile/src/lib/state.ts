@@ -16,7 +16,7 @@ export function mergeItems(local: QueueEntry[], server: ItemSummary[]): DisplayI
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .map((entry) => ({
       id: entry.id,
-      state: "queued (phone)",
+      state: entry.lastError ? `stuck: ${entry.lastError}` : "queued (phone)",
       title: `${entry.source} capture`,
       local: true,
     }));

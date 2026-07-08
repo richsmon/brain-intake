@@ -211,3 +211,36 @@ describe("makeQueue", () => {
     expect(await queue.pending()).toEqual([]);
   });
 });
+
+  it("flush() records the failure message on the entry (lastError)", async () => {
+    const { root, queue } = await freshQueue();
+    await queue.enqueue({ kind: "text", source: "text", text: "will fail" });
+    const { api } = recordingApi({
+      createText: async () => {
+        throw new ApiError("http", 400);
+      },
+    });
+    await queue.flush(api);
+    const meta = JSON.parse(await readFile(join(root, "queue", "id-1", "meta.json"), "utf8"));
+    expect(meta.lastError).toBe("API error: HTTP 400");
+
+    let entries = await queue.pending();
+    expect(entries[0].lastError).toBe("API error: HTTP 400");
+
+    const ok = recordingApi();
+    await queue.flush(ok.api);
+    expect(await queue.pending()).toEqual([]);
+  });
+
+  it("flush() records a break-causing unreachable error on the attempted entry", async () => {
+    const { root, queue } = await freshQueue();
+    await queue.enqueue({ kind: "text", source: "text", text: "a" });
+    const { api } = recordingApi({
+      createText: async () => {
+        throw new ApiError("unreachable");
+      },
+    });
+    await queue.flush(api);
+    const meta = JSON.parse(await readFile(join(root, "queue", "id-1", "meta.json"), "utf8"));
+    expect(meta.lastError).toBe("API unreachable");
+  });

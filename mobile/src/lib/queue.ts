@@ -29,6 +29,9 @@ export interface QueueEntry {
   deviceTs: string;
   createdAt: string;
   tries: number;
+  /** Message of the most recent flush failure — surfaced in the Items UI so a
+   * stuck entry explains itself. */
+  lastError?: string;
 }
 
 export interface FlushReport {
@@ -126,8 +129,10 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
           await fs.remove(entryDir(entry.id));
           sent++;
         } catch (err) {
+          entry.lastError = err instanceof Error ? err.message : String(err);
           if (err instanceof ApiError && err.kind === "unreachable") {
             // Connectivity died mid-flush — every later entry would fail too.
+            await writeMeta(entry);
             break;
           }
           entry.tries += 1;

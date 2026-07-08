@@ -63,7 +63,7 @@ function lastClassifiedTitle(events: InboxEvent[]): string | undefined {
 
 export function buildServer(config: ServerConfig): FastifyInstance {
   const inboxDir = join(config.brainRoot, 'inbox');
-  const app = Fastify();
+  const app = Fastify({ logger: process.env.LOG_REQUESTS === '1' });
   app.register(multipart, {
     limits: { fileSize: config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES },
   });
