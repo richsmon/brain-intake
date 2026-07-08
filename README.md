@@ -53,3 +53,24 @@ npm test        # vitest
 npm run typecheck
 npm run lint
 ```
+
+## Mobile app (`mobile/`)
+
+Expo app ("Brainer") — the capture + read surface over this API. Offline-first:
+captures queue on-device (`queue/<uuid>/meta.json + payload`) and flush when the
+brain-host answers `/health`; entries are removed only after a `201`, so retries
+are safe thanks to the server's sha-dedupe.
+
+```sh
+cd mobile
+npm test           # jest (jest-expo + RNTL)
+npx tsc --noEmit   # strict typecheck
+npx eslint .
+npm run ios        # simulator dev run (prebuilds native incl. share extension)
+```
+
+Capture sources: text note, photo (camera/library), voice (m4a), iOS share
+sheet (web URLs / text / images — `expo-share-intent` extension target).
+Configure the brain-host URL in the in-app Settings (⚙️); default points at the
+Tailscale tailnet IP. Distribution: TestFlight Internal Testing via the native
+xcodebuild pipeline (see the brain repo's TF runbook notes).
