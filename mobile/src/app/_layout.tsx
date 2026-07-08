@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { AppState } from "react-native";
 
+import ShareIntentHandler from "../components/share-intent-handler";
 import { flushQueue } from "../lib/brain";
 
 export default function RootLayout() {
@@ -14,10 +15,13 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="item/[id]" options={{ title: "Item" }} />
-      <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
-    </Stack>
+    <>
+      <ShareIntentHandler />
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="item/[id]" options={{ title: "Item" }} />
+        <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
+      </Stack>
+    </>
   );
 }
