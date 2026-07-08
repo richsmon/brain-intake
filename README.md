@@ -52,9 +52,11 @@ intake loop then classifies from the transcript instead of raw audio
 Recommended local-first setup (zero API keys, per the brain's design note):
 
 ```sh
-pipx install whisper-ctranslate2   # faster-whisper CLI
-WHISPER_CMD="whisper-ctranslate2 --model base --output_format txt --print_text {input}" \
-  BRAIN_ROOT=... npm start
+pipx install whisper-ctranslate2 --python /opt/homebrew/opt/python@3.13/bin/python3.13
+# stdout carries progress noise; the .txt file is clean — write it, then cat it:
+WHISPER_CMD="$HOME/.local/bin/whisper-ctranslate2 --model base --output_format txt \
+  --output_dir /tmp/brainer-stt {input} >/dev/null 2>&1 && cat /tmp/brainer-stt/payload.txt" \
+  BRAIN_ROOT=... BIND=<tailnet-ip> npm start
 ```
 
 Cloud fallbacks (Groq/OpenAI) stay operator-side `WHISPER_CMD` config — never
