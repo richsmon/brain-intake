@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -80,5 +80,58 @@ describe('POST /items (multipart: voice / photo)', () => {
       payload: form({ source: 'voice' }, 'memo.m4a', Buffer.from('way more than eight bytes')),
     });
     expect(res.statusCode).toBe(413);
+  });
+});
+
+describe('transcription hook (WHISPER_CMD)', () => {
+  async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
+    const start = Date.now();
+    while (!check()) {
+      if (Date.now() - start > ms) throw new Error('timed out waiting');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  test('voice upload triggers fire-and-forget transcription: transcript.md + transcribed event', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root, whisperCmd: 'echo spoken words from {input}' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items',
+      payload: form({ source: 'voice' }, 'memo.m4a', Buffer.from('fake-audio-1')),
+    });
+    expect(res.statusCode).toBe(201);
+    const { id } = res.json();
+    const dir = join(root, 'inbox', id);
+
+    await waitFor(() => existsSync(join(dir, 'transcript.md')));
+    expect(readFileSync(join(dir, 'transcript.md'), 'utf-8')).toContain('spoken words from');
+    await waitFor(() => readEvents(dir).some((e) => e.event === 'transcribed'));
+  });
+
+  test('photo upload does not trigger transcription', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root, whisperCmd: 'echo never {input}' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items',
+      payload: form({ source: 'photo' }, 'p.jpg', Buffer.from('fake-jpg')),
+    });
+    const { id } = res.json();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(existsSync(join(root, 'inbox', id, 'transcript.md'))).toBe(false);
+  });
+
+  test('no whisperCmd → no transcription attempted', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items',
+      payload: form({ source: 'voice' }, 'memo.m4a', Buffer.from('fake-audio-2')),
+    });
+    const { id } = res.json();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(existsSync(join(root, 'inbox', id, 'transcript.md'))).toBe(false);
   });
 });

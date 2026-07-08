@@ -3,11 +3,15 @@ import multipart from '@fastify/multipart';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { createItem, itemState, readEvents, type InboxEvent } from './inbox.js';
+import { AUDIO_EXTS, transcribeItem } from './transcribe.js';
 
 export interface ServerConfig {
   brainRoot: string;
   /** Multipart file-size cap in bytes. Default 25 MB. */
   maxUploadBytes?: number;
+  /** Shell command printing a transcript of `{input}` to stdout (BI-06).
+   * Unset = transcription disabled; audio items stay raw. */
+  whisperCmd?: string;
 }
 
 const JSON_SOURCES = new Set(['text', 'share-sheet']);
@@ -88,6 +92,14 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         originalName: data.filename,
         ...(deviceTs !== undefined ? { deviceTs } : {}),
       });
+      // Background-task shape: capture answers immediately; the transcript
+      // lands later as a `transcribed` event on the same trail.
+      const whisperCmd = config.whisperCmd;
+      if (whisperCmd !== undefined && AUDIO_EXTS.has(ext)) {
+        void transcribeItem(join(inboxDir, result.id), whisperCmd).catch((err: unknown) => {
+          app.log.error({ err, item: result.id }, 'transcription failed');
+        });
+      }
       return reply.code(201).send(result);
     }
 
