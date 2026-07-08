@@ -48,6 +48,9 @@ export class ApiError extends Error {
 }
 
 const TIMEOUT_MS = 5000;
+// Multipart uploads (photos are megabytes) need far longer than the snappy
+// JSON timeout — a HEIC over the tailnet blew the 5s budget in build 2.
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 const MIME_BY_EXT: Record<FileExt, string> = {
   jpg: "image/jpeg",
@@ -62,9 +65,13 @@ const MIME_BY_EXT: Record<FileExt, string> = {
 export function makeApi(baseUrl: string, fetchImpl: typeof fetch = fetch) {
   const base = baseUrl.replace(/\/+$/, "");
 
-  async function request<T>(path: string, init: Omit<RequestInit, "signal"> = {}): Promise<T> {
+  async function request<T>(
+    path: string,
+    init: Omit<RequestInit, "signal"> = {},
+    timeoutMs: number = TIMEOUT_MS,
+  ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Awaited<ReturnType<typeof fetch>>;
     try {
       res = await fetchImpl(`${base}${path}`, { ...init, signal: controller.signal });
@@ -110,7 +117,7 @@ export function makeApi(baseUrl: string, fetchImpl: typeof fetch = fetch) {
         name: input.name,
         type: MIME_BY_EXT[input.ext],
       } as unknown as Blob);
-      return request<CreateResult>("/items", { method: "POST", body: form });
+      return request<CreateResult>("/items", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
     },
 
     listItems(): Promise<ItemSummary[]> {

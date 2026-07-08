@@ -139,3 +139,37 @@ describe("makeApi", () => {
     expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe("timeouts", () => {
+  it("aborts JSON requests at 5s but keeps file uploads alive past it", async () => {
+    jest.useFakeTimers();
+    try {
+      const impl = ((url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        })) as unknown as typeof fetch;
+      const api = makeApi("http://host:8787", impl);
+
+      const health = api.health().catch((e: unknown) => e);
+      const upload = api
+        .createFile({ source: "photo", uri: "file:///p.heic", name: "p.heic", ext: "heic" })
+        .catch((e: unknown) => e);
+
+      jest.advanceTimersByTime(6_000);
+      const healthErr = await health;
+      expect(healthErr).toBeInstanceOf(ApiError);
+      expect((healthErr as ApiError).kind).toBe("unreachable");
+
+      let uploadSettled = false;
+      void upload.then(() => (uploadSettled = true));
+      await Promise.resolve();
+      expect(uploadSettled).toBe(false); // still in flight at 6s
+
+      jest.advanceTimersByTime(120_000);
+      const uploadErr = await upload;
+      expect(uploadErr).toBeInstanceOf(ApiError); // aborts only at its own 120s
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
