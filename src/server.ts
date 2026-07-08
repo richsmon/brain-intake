@@ -75,7 +75,10 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       const data = await req.file();
       if (!data) return reply.code(400).send({ error: 'file part required' });
 
-      const source = multipartField(data.fields, 'source');
+      // Form fields first; query-string fallback serves native uploaders
+      // whose multipart field ordering is out of our control.
+      const query = req.query as Record<string, string | undefined>;
+      const source = multipartField(data.fields, 'source') ?? query.source;
       if (source === undefined || !UPLOAD_SOURCES.has(source)) {
         return reply.code(400).send({ error: 'multipart source must be voice or photo' });
       }
@@ -84,7 +87,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         return reply.code(400).send({ error: `extension not allowed: ${ext || '(none)'}` });
       }
 
-      const deviceTs = multipartField(data.fields, 'deviceTs');
+      const deviceTs = multipartField(data.fields, 'deviceTs') ?? query.deviceTs;
       const buf = await data.toBuffer(); // throws 413 over the fileSize limit
       const result = createItem(inboxDir, buf, {
         source,

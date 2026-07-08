@@ -135,3 +135,33 @@ describe('transcription hook (WHISPER_CMD)', () => {
     expect(existsSync(join(root, 'inbox', id, 'transcript.md'))).toBe(false);
   });
 });
+
+describe('multipart with query-string fields (native uploader path)', () => {
+  test('source + deviceTs from the query string work like form fields', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items?source=voice&deviceTs=2026-07-08T20:00:00Z',
+      payload: form({}, 'memo.m4a', Buffer.from('native-upload-audio')),
+    });
+    expect(res.statusCode).toBe(201);
+    const { id } = res.json();
+    const events = readEvents(join(root, 'inbox', id));
+    expect(events[0]!.source).toBe('voice');
+    expect(events[0]!.device_ts).toBe('2026-07-08T20:00:00Z');
+  });
+
+  test('form fields still win over query when both present', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/items?source=photo',
+      payload: form({ source: 'voice' }, 'm.m4a', Buffer.from('x2')),
+    });
+    expect(res.statusCode).toBe(201);
+    const { id } = res.json();
+    expect(readEvents(join(root, 'inbox', id))[0]!.source).toBe('voice');
+  });
+});

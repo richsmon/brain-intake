@@ -2,9 +2,9 @@
 // filesystem. Screens import ONLY this module for brain operations, which
 // keeps component tests to a single jest.mock target.
 
-import { Paths } from "expo-file-system";
+import { File, Paths, UploadType } from "expo-file-system";
 
-import { makeApi, type Api, type FileSource, type TextSource } from "./api";
+import { ApiError, MIME_BY_EXT, makeApi, type Api, type FileSource, type TextSource } from "./api";
 import { checkCapturedFile, type FileCheck } from "./file-checks";
 import { makeQueue, type FlushReport, type Queue, type QueueEntry } from "./queue";
 import { expoQueueFs } from "./queue-fs.expo";
@@ -14,9 +14,31 @@ export const settings = makeSettings();
 
 let queue: Queue | null = null;
 
+/** Native multipart upload — capture metadata rides the query string so the
+ * server never depends on multipart field ordering. */
+async function uploadFileNative(
+  payloadPath: string,
+  meta: { source: FileSource; name: string; ext: keyof typeof MIME_BY_EXT; deviceTs: string },
+): Promise<void> {
+  const base = (await settings.getBaseUrl()).replace(/\/+$/, "");
+  const query = new URLSearchParams({ source: meta.source, deviceTs: meta.deviceTs });
+  const result = await new File(payloadPath).upload(`${base}/items?${query.toString()}`, {
+    uploadType: UploadType.MULTIPART,
+    fieldName: "file",
+    mimeType: MIME_BY_EXT[meta.ext],
+  });
+  if (result.status < 200 || result.status >= 300) {
+    throw new ApiError("http", result.status);
+  }
+}
+
 function getQueue(): Queue {
   if (!queue) {
-    queue = makeQueue({ fs: expoQueueFs, dir: `${Paths.document.uri}queue` });
+    queue = makeQueue({
+      fs: expoQueueFs,
+      dir: `${Paths.document.uri}queue`,
+      uploadFile: uploadFileNative,
+    });
   }
   return queue;
 }

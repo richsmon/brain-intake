@@ -52,7 +52,7 @@ const TIMEOUT_MS = 5000;
 // JSON timeout — a HEIC over the tailnet blew the 5s budget in build 2.
 const UPLOAD_TIMEOUT_MS = 120_000;
 
-const MIME_BY_EXT: Record<FileExt, string> = {
+export const MIME_BY_EXT: Record<FileExt, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   png: "image/png",

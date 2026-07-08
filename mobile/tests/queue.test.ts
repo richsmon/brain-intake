@@ -244,3 +244,56 @@ describe("makeQueue", () => {
     const meta = JSON.parse(await readFile(join(root, "queue", "id-1", "meta.json"), "utf8"));
     expect(meta.lastError).toBe("API unreachable");
   });
+
+  it("flush() uses the injected native uploader for file entries", async () => {
+    const { root, queue: plainQueue } = await freshQueue();
+    void plainQueue;
+    const calls: unknown[] = [];
+    let n = 0;
+    const queue = makeQueue({
+      fs: nodeFs,
+      dir: join(root, "queue2"),
+      newId: () => `id-${++n}`,
+      now: () => "2026-07-08T12:00:00Z",
+      uploadFile: async (path, meta) => {
+        calls.push([path, meta]);
+      },
+    });
+    const src = join(root, "v2.m4a");
+    await writeFile(src, "AUDIO2");
+    await queue.enqueue({ kind: "file", source: "voice", sourceUri: src, ext: "m4a" });
+    const { api, calls: apiCalls } = recordingApi();
+
+    const report = await queue.flush(api);
+
+    expect(report).toEqual({ sent: 1, left: 0 });
+    expect(calls).toEqual([
+      [
+        join(root, "queue2", "id-1", "payload.m4a"),
+        { source: "voice", name: "payload.m4a", ext: "m4a", deviceTs: "2026-07-08T12:00:00Z" },
+      ],
+    ]);
+    expect(apiCalls.map((c) => c.method)).toEqual(["health"]); // createFile NOT used
+    expect(await queue.pending()).toEqual([]);
+  });
+
+  it("flush() records native uploader failures as lastError", async () => {
+    const { root } = await freshQueue();
+    let n = 0;
+    const queue = makeQueue({
+      fs: nodeFs,
+      dir: join(root, "queue3"),
+      newId: () => `id-${++n}`,
+      now: () => "2026-07-08T12:00:00Z",
+      uploadFile: async () => {
+        throw new ApiError("http", 413);
+      },
+    });
+    const src = join(root, "big.m4a");
+    await writeFile(src, "BIG");
+    await queue.enqueue({ kind: "file", source: "voice", sourceUri: src, ext: "m4a" });
+    const report = await queue.flush(recordingApi().api);
+    expect(report).toEqual({ sent: 0, left: 1 });
+    const meta = JSON.parse(await readFile(join(root, "queue3", "id-1", "meta.json"), "utf8"));
+    expect(meta.lastError).toBe("API error: HTTP 413");
+  });

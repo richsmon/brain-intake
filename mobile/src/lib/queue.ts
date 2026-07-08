@@ -39,11 +39,20 @@ export interface FlushReport {
   left: number;
 }
 
+/** Native file uploader (expo-fs File.upload) — RN's fetch cannot reliably
+ * stream file:// bodies, so file entries go through this seam when provided.
+ * Must throw ApiError on failure. */
+export type FileUploader = (
+  payloadPath: string,
+  meta: { source: FileSource; name: string; ext: FileExt; deviceTs: string },
+) => Promise<void>;
+
 interface QueueDeps {
   fs: QueueFs;
   dir: string;
   newId?: () => string;
   now?: () => string;
+  uploadFile?: FileUploader;
 }
 
 function defaultNewId(): string {
@@ -52,7 +61,7 @@ function defaultNewId(): string {
   return `q-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date().toISOString() }: QueueDeps) {
+export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date().toISOString(), uploadFile }: QueueDeps) {
   const entryDir = (id: string) => `${dir}/${id}`;
   const metaPath = (id: string) => `${entryDir(id)}/meta.json`;
   const payloadPath = (e: Pick<QueueEntry, "id" | "ext">) => `${entryDir(e.id)}/payload.${e.ext}`;
@@ -115,6 +124,13 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
             await api.createText({
               source: entry.source as TextSource,
               text: await fs.readText(payloadPath(entry)),
+              deviceTs: entry.deviceTs,
+            });
+          } else if (uploadFile) {
+            await uploadFile(payloadPath(entry), {
+              source: entry.source as FileSource,
+              name: entry.originalName ?? `payload.${entry.ext}`,
+              ext: entry.ext as FileExt,
               deviceTs: entry.deviceTs,
             });
           } else {
