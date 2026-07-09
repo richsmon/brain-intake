@@ -1,10 +1,17 @@
+// R2 Item detail — the event trail, verbatim. The artifact ref is the payoff:
+// proof that a captured thought *became* something in the brain.
+
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { getApi } from "../../lib/brain";
+import { EventStateChip } from "../../components/ds/event-state-chip";
+import { EventTimeline } from "../../components/ds/event-timeline";
 import type { InboxEvent, ItemDetail } from "../../lib/api";
+import { getApi } from "../../lib/brain";
+import { useTheme } from "../../theme";
+import { fonts, radii, spacing, typeScale } from "../../theme/tokens";
 
 function eventExtras(event: InboxEvent): string {
   const extras = Object.entries(event)
@@ -15,6 +22,7 @@ function eventExtras(event: InboxEvent): string {
 
 export default function ItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors } = useTheme();
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -25,13 +33,13 @@ export default function ItemDetailScreen() {
         const api = await getApi();
         setDetail(await api.itemDetail(id));
       } catch {
-        setError("Failed to load item");
+        setError("That item didn't load. Pull back and retry.");
       }
     })();
   }, [id]);
 
-  if (error) return <Text style={styles.error}>{error}</Text>;
-  if (!detail) return <Text style={styles.loading}>Loading…</Text>;
+  if (error) return <Text style={[styles.message, { color: colors.danger }]}>{error}</Text>;
+  if (!detail) return <Text style={[styles.message, { color: colors.ink3 }]}>Loading…</Text>;
 
   const artifact = detail.events.find((event) => event.event === "became")?.artifact as
     | string
@@ -39,29 +47,42 @@ export default function ItemDetailScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.id}>{detail.id}</Text>
-      <Text style={styles.meta}>
-        {detail.state} · {detail.payload.name} ({detail.payload.bytes} B)
-      </Text>
-      <View style={styles.timeline}>
-        {detail.events.map((event, index) => (
-          <View key={index} style={styles.event}>
-            <Text style={styles.eventName}>{event.event}</Text>
-            <Text style={styles.eventTs}>{event.ts}</Text>
-            {eventExtras(event) ? <Text style={styles.eventExtras}>{eventExtras(event)}</Text> : null}
-          </View>
-        ))}
+      <Text style={[styles.id, { color: colors.ink3 }]}>{detail.id}</Text>
+      <View style={styles.headRow}>
+        <EventStateChip state={detail.state} />
+        <Text style={[styles.payload, { color: colors.ink3 }]}>
+          {detail.payload.name} · {detail.payload.bytes} B
+        </Text>
+      </View>
+      <View
+        style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}
+      >
+        <EventTimeline
+          events={detail.events.map((event) => ({
+            event: event.event,
+            ts: event.ts,
+            extras: eventExtras(event) || undefined,
+          }))}
+        />
       </View>
       {artifact ? (
         <Pressable
-          style={styles.artifact}
+          style={({ pressed }) => [
+            styles.artifact,
+            {
+              borderColor: colors.stateBecame,
+              backgroundColor: pressed ? colors.stateBecameSoft : colors.bgSurface,
+            },
+          ]}
           onPress={() => {
             void Clipboard.setStringAsync(artifact);
             setCopied(true);
           }}
         >
-          <Text style={styles.artifactLabel}>Artifact {copied ? "(copied ✓)" : "(tap to copy)"}</Text>
-          <Text style={styles.artifactPath}>{artifact}</Text>
+          <Text style={[styles.artifactLabel, { color: colors.stateBecame }]}>
+            Artifact {copied ? "(copied ✓)" : "(tap to copy)"}
+          </Text>
+          <Text style={[styles.artifactPath, { color: colors.ink1 }]}>{artifact}</Text>
         </Pressable>
       ) : null}
     </ScrollView>
@@ -70,56 +91,45 @@ export default function ItemDetailScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
-    gap: 12,
+    padding: spacing.s4,
+    gap: spacing.s3,
   },
   id: {
-    fontSize: 16,
-    fontWeight: "600",
+    fontFamily: fonts.mono,
+    fontSize: typeScale.caption,
   },
-  meta: {
-    color: "#757575",
+  headRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s3,
   },
-  timeline: {
-    gap: 10,
+  payload: {
+    fontFamily: fonts.mono,
+    fontSize: typeScale.label,
   },
-  event: {
-    borderLeftWidth: 2,
-    borderLeftColor: "#208AEF",
-    paddingLeft: 10,
-    gap: 2,
-  },
-  eventName: {
-    fontWeight: "600",
-  },
-  eventTs: {
-    fontSize: 12,
-    color: "#757575",
-  },
-  eventExtras: {
-    fontSize: 13,
+  card: {
+    borderWidth: 1,
+    borderRadius: radii.card,
+    padding: spacing.s4,
+    paddingBottom: 0,
   },
   artifact: {
     borderWidth: 1,
-    borderColor: "#2e7d32",
-    borderRadius: 8,
-    padding: 12,
-    gap: 4,
+    borderRadius: radii.card,
+    padding: spacing.s3,
+    gap: spacing.s1,
   },
   artifactLabel: {
+    fontFamily: fonts.mono,
+    fontSize: typeScale.label,
     fontWeight: "600",
-    color: "#2e7d32",
   },
   artifactPath: {
-    fontSize: 13,
+    fontFamily: fonts.mono,
+    fontSize: typeScale.bodySm,
   },
-  loading: {
-    padding: 16,
+  message: {
+    padding: spacing.s4,
     textAlign: "center",
-  },
-  error: {
-    padding: 16,
-    textAlign: "center",
-    color: "#c62828",
   },
 });

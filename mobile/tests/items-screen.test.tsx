@@ -1,9 +1,10 @@
 import { render, screen } from "@testing-library/react-native";
 
 import ItemsScreen from "../src/app/(tabs)/items";
+import { ThemeProvider } from "../src/theme";
 
 jest.mock("expo-router", () => ({
-  Link: ({ children }: { children: React.ReactNode }) => children,
+  router: { push: jest.fn() },
 }));
 
 jest.mock("../src/lib/brain", () => ({
@@ -34,7 +35,11 @@ jest.mock("../src/lib/brain", () => ({
 
 describe("ItemsScreen", () => {
   it("renders local pending ahead of server items with state chips", async () => {
-    await render(<ItemsScreen />);
+    await render(
+      <ThemeProvider systemScheme="dark">
+        <ItemsScreen />
+      </ThemeProvider>,
+    );
     expect(await screen.findByText("voice capture")).toBeOnTheScreen();
     expect(screen.getByText("queued (phone)")).toBeOnTheScreen();
     expect(screen.getByText("BI-1 acceptance smoke")).toBeOnTheScreen();

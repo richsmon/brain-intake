@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 
 import ItemDetailScreen from "../src/app/item/[id]";
+import { ThemeProvider } from "../src/theme";
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => ({ id: "2026-07-08-6683abec" }),
@@ -33,11 +34,16 @@ jest.mock("../src/lib/brain", () => ({
 
 describe("ItemDetailScreen", () => {
   it("renders the full event timeline and copies the artifact path on tap", async () => {
-    await render(<ItemDetailScreen />);
+    await render(
+      <ThemeProvider systemScheme="dark">
+        <ItemDetailScreen />
+      </ThemeProvider>,
+    );
     expect(await screen.findByText("2026-07-08-6683abec")).toBeOnTheScreen();
     expect(screen.getByText("captured")).toBeOnTheScreen();
     expect(screen.getByText("queued")).toBeOnTheScreen();
-    expect(screen.getByText("became")).toBeOnTheScreen();
+    // "became" appears twice by design: the item-state chip and the timeline event.
+    expect(screen.getAllByText("became").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("source: text · sha: 6683abec")).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByText("Artifact (tap to copy)"));
