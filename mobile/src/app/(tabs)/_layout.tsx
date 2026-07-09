@@ -1,15 +1,13 @@
 import { Tabs } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ModeBar, type ModeName } from "../../components/ds/mode-bar";
+import type { ItemSummary } from "../../lib/api";
+import { getApi } from "../../lib/brain";
+import { loadSeenIds, markBecameSeen, unseenBecameCount } from "../../lib/read-badge";
 import { useTheme } from "../../theme";
-
-// Structural subset of @react-navigation/bottom-tabs' BottomTabBarProps —
-// not a direct dependency, expo-router provides it at runtime.
-interface TabBarProps {
-  state: { index: number; routes: { name: string }[] };
-  navigation: { navigate: (name: string) => void };
-}
 
 const ROUTE_TO_MODE: Record<string, ModeName> = {
   items: "read",
@@ -23,19 +21,63 @@ const MODE_TO_ROUTE: Record<ModeName, string> = {
   act: "act",
 };
 
-function ModeBarTabs({ state, navigation }: TabBarProps) {
-  const activeRoute = state.routes[state.index]?.name ?? "index";
-  return (
-    <ModeBar
-      active={ROUTE_TO_MODE[activeRoute] ?? "capture"}
-      onChange={(mode) => navigation.navigate(MODE_TO_ROUTE[mode])}
-    />
-  );
+// Structural subset of @react-navigation/bottom-tabs' BottomTabBarProps —
+// not a direct dependency, expo-router provides it at runtime.
+interface TabBarProps {
+  state: { index: number; routes: { name: string }[] };
+  navigation: { navigate: (name: string) => void };
+}
+
+/** New-`became` count since the founder last opened Read; offline → silent 0. */
+function useReadBadge() {
+  const [count, setCount] = useState(0);
+  const itemsRef = useRef<ItemSummary[]>([]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const items = await (await getApi()).listItems();
+      itemsRef.current = items;
+      setCount(unseenBecameCount(items, await loadSeenIds()));
+    } catch {
+      // Offline — no badge is the honest answer.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refresh();
+    });
+    return () => subscription.remove();
+  }, [refresh]);
+
+  const markRead = useCallback(() => {
+    setCount(0);
+    void markBecameSeen(itemsRef.current);
+  }, []);
+
+  return { count, markRead };
 }
 
 export default function TabsLayout() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { count: readBadge, markRead } = useReadBadge();
+
+  const renderTabBar = ({ state, navigation }: TabBarProps) => {
+    const activeRoute = state.routes[state.index]?.name ?? "index";
+    return (
+      <ModeBar
+        active={ROUTE_TO_MODE[activeRoute] ?? "capture"}
+        readBadge={readBadge}
+        onChange={(mode) => {
+          if (mode === "read") markRead();
+          navigation.navigate(MODE_TO_ROUTE[mode]);
+        }}
+      />
+    );
+  };
+
   return (
     <Tabs
       initialRouteName="index"
@@ -46,7 +88,7 @@ export default function TabsLayout() {
         headerShown: false,
         sceneStyle: { backgroundColor: colors.bgCanvas, paddingTop: insets.top },
       }}
-      tabBar={(props) => <ModeBarTabs {...props} />}
+      tabBar={renderTabBar}
     >
       <Tabs.Screen name="items" options={{ title: "Read" }} />
       <Tabs.Screen name="index" options={{ title: "Capture" }} />
