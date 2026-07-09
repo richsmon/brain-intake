@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { createItem, itemState, readEvents, type InboxEvent } from './inbox.js';
 import { AUDIO_EXTS, transcribeItem } from './transcribe.js';
@@ -125,11 +125,14 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       const events = readEvents(join(inboxDir, id));
       if (events.length === 0) continue;
       const title = lastClassifiedTitle(events);
+      const became = events.find((e) => e.event === 'became');
+      const kind = typeof became?.kind === 'string' ? became.kind : undefined;
       out.push({
         id,
         state: itemState(events),
         lastEvent: events[events.length - 1]!.event,
         ...(title !== undefined ? { title } : {}),
+        ...(kind !== undefined ? { kind } : {}),
       });
     }
     return out;
@@ -147,11 +150,17 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         ? { name: payloadName, bytes: statSync(join(dir, payloadName)).size }
         : undefined;
 
+    const transcriptPath = join(dir, 'transcript.md');
+    const transcript = existsSync(transcriptPath)
+      ? readFileSync(transcriptPath, 'utf-8')
+      : undefined;
+
     return {
       id: req.params.id,
       state: itemState(events),
       events,
       ...(payload !== undefined ? { payload } : {}),
+      ...(transcript !== undefined ? { transcript } : {}),
     };
   });
 

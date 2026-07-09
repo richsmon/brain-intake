@@ -26,6 +26,13 @@ describe("EventStateChip", () => {
     screen.getByText("○");
     screen.getByText("queued (phone)");
   });
+
+  it("shows a meaningful label override while keeping the state visuals", async () => {
+    await renderThemed(<EventStateChip state="became" label="note" />);
+    screen.getByText("✦");
+    screen.getByText("note");
+    expect(screen.queryByText("became")).toBeNull();
+  });
 });
 
 describe("ItemRow", () => {

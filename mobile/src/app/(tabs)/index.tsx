@@ -7,7 +7,17 @@ import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } 
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import { CaptureButton } from "../../components/ds/capture-button";
 import { EventStateChip } from "../../components/ds/event-state-chip";
@@ -67,6 +77,7 @@ export default function CaptureScreen() {
   async function saveText() {
     const trimmed = text.trim();
     if (!trimmed) return;
+    Keyboard.dismiss();
     await captureText(trimmed);
     setText("");
     confirmQueued();
@@ -97,6 +108,7 @@ export default function CaptureScreen() {
   }
 
   function pickPhoto() {
+    Keyboard.dismiss();
     Alert.alert("Photo", undefined, [
       { text: "Camera", onPress: () => void capturePhotoFrom("camera") },
       { text: "Library", onPress: () => void capturePhotoFrom("library") },
@@ -117,6 +129,7 @@ export default function CaptureScreen() {
       if (outcome.ok) confirmQueued();
       else setError(outcome.reason);
     } else {
+      Keyboard.dismiss();
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
         setError("Microphone permission denied");
@@ -131,7 +144,7 @@ export default function CaptureScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bgCanvas }]}>
       <ScreenHeader
         title="Brainer"
         right={
@@ -145,7 +158,18 @@ export default function CaptureScreen() {
         <OfflineBadge queued={queued} />
       </ScreenHeader>
 
-      <View style={styles.thumbZone}>
+      <KeyboardAvoidingView
+        style={styles.avoid}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
+        {/* Empty space above the thumb zone: tap anywhere to put the keyboard away. */}
+        <Pressable
+          accessibilityLabel="Dismiss keyboard"
+          style={styles.dismissZone}
+          onPress={() => Keyboard.dismiss()}
+        />
+        <View style={styles.thumbZone}>
         {confirmed && !recording ? (
           <View style={styles.confirm}>
             <EventStateChip state="queued" />
@@ -195,7 +219,8 @@ export default function CaptureScreen() {
             <CaptureButton kind="photo" onPress={pickPhoto} />
           </View>
         )}
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -210,8 +235,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  thumbZone: {
+  avoid: {
     flex: 1,
+  },
+  dismissZone: {
+    flex: 1,
+  },
+  thumbZone: {
     justifyContent: "flex-end",
     paddingHorizontal: spacing.s4,
     paddingBottom: spacing.s4,

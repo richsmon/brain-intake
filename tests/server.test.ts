@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -76,6 +76,22 @@ describe('GET /items', () => {
       { id, state: 'open', lastEvent: 'classified', title: 'A listable thought' },
     ]);
   });
+
+  test('exposes what the item became — kind from the became event', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'becomes a note' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), {
+      event: 'became', artifact: 'workspaces/x/knowledge/n.md', kind: 'note',
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/items' });
+    expect(res.json()).toEqual([
+      { id, state: 'became', lastEvent: 'became', kind: 'note' },
+    ]);
+  });
 });
 
 describe('GET /items/:id', () => {
@@ -93,6 +109,19 @@ describe('GET /items/:id', () => {
     expect(body.state).toBe('open');
     expect(body.events.map((e: { event: string }) => e.event)).toEqual(['captured', 'queued']);
     expect(body.payload).toEqual({ name: 'payload.md', bytes: 'detail me'.length });
+    expect(body.transcript).toBeUndefined();
+  });
+
+  test('returns the transcript text when transcript.md exists (voice items)', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'voice-ish' } })
+    ).json();
+    writeFileSync(join(root, 'inbox', id, 'transcript.md'), 'the spoken thought');
+
+    const res = await app.inject({ method: 'GET', url: `/items/${id}` });
+    expect(res.json().transcript).toBe('the spoken thought');
   });
 
   test('unknown id → 404', async () => {

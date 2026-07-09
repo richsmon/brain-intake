@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react-native";
+import { fireEvent, render, screen } from "@testing-library/react-native";
 import { Text } from "react-native";
 
 import type { SettingsStore } from "../src/lib/settings";
@@ -72,20 +72,18 @@ describe("ThemeProvider", () => {
 
   it("applies and persists a manual override", async () => {
     const store = memoryStore();
-    let setPref: (p: "system" | "dark" | "light") => void = () => {};
-    function Grab() {
+    function LightSwitch() {
       const t = useTheme();
-      setPref = t.setPreference;
-      return null;
+      return <Text onPress={() => t.setPreference("light")}>go-light</Text>;
     }
     await render(
       <ThemeProvider systemScheme="dark" settingsStore={store}>
-        <Grab />
+        <LightSwitch />
         <Probe />
       </ThemeProvider>,
     );
     await screen.findByText("system:dark:#14100B");
-    await act(async () => setPref("light"));
+    await fireEvent.press(screen.getByText("go-light"));
     await screen.findByText("light:light:#F4EEE3");
     expect(store.data.get("brain.theme")).toBe("light");
   });

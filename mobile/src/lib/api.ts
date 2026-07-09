@@ -13,6 +13,7 @@ export interface InboxEvent {
 }
 
 export interface ItemSummary {
+  kind?: string;
   id: string;
   state: string;
   lastEvent: string;
@@ -20,6 +21,7 @@ export interface ItemSummary {
 }
 
 export interface ItemDetail {
+  transcript?: string;
   id: string;
   state: string;
   events: InboxEvent[];

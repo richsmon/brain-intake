@@ -12,8 +12,10 @@ import { ScreenHeader } from "../../components/ds/screen-header";
 import type { ItemSummary } from "../../lib/api";
 import { flushQueue, getApi, pendingEntries } from "../../lib/brain";
 import { mergeItems, type DisplayItem } from "../../lib/state";
+import { useTheme } from "../../theme";
 
 export default function ItemsScreen() {
+  const { colors } = useTheme();
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,7 +46,7 @@ export default function ItemsScreen() {
   const queued = items.filter((item) => item.local).length;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
       <ScreenHeader title="Read">
         <OfflineBadge queued={queued} />
       </ScreenHeader>
@@ -55,6 +57,7 @@ export default function ItemsScreen() {
           <ItemRow
             title={item.title ?? item.id}
             state={item.state}
+            stateLabel={item.kind}
             onPress={
               item.local
                 ? undefined

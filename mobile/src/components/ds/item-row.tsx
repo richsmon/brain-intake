@@ -10,12 +10,14 @@ import { EventStateChip } from "./event-state-chip";
 export function ItemRow({
   title,
   state,
+  stateLabel,
   age,
   source,
   onPress,
 }: {
   title: string;
   state: string;
+  stateLabel?: string;
   age?: string;
   source?: string;
   onPress?: () => void;
@@ -34,7 +36,7 @@ export function ItemRow({
         {title}
       </Text>
       <View style={styles.meta}>
-        <EventStateChip state={state} />
+        <EventStateChip state={state} label={stateLabel} />
         {source ? <Text style={[styles.mono, { color: colors.ink3 }]}>{source}</Text> : null}
         <View style={styles.spacer} />
         {age ? <Text style={[styles.mono, { color: colors.ink3 }]}>{age}</Text> : null}

@@ -8,6 +8,7 @@ export interface DisplayItem {
   id: string;
   state: string;
   title?: string;
+  kind?: string;
   local: boolean;
 }
 
@@ -27,6 +28,7 @@ export function mergeItems(local: QueueEntry[], server: ItemSummary[]): DisplayI
       id: item.id,
       state: item.state,
       ...(item.title !== undefined ? { title: item.title } : {}),
+      ...(item.kind !== undefined ? { kind: item.kind } : {}),
       local: false,
     }));
 

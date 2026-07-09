@@ -27,6 +27,7 @@ jest.mock("../src/lib/brain", () => ({
         state: "became",
         lastEvent: "became",
         title: "BI-1 acceptance smoke",
+        kind: "note",
       },
       { id: "2026-07-08-ffff0000", state: "open", lastEvent: "queued" },
     ],
@@ -43,7 +44,9 @@ describe("ItemsScreen", () => {
     expect(await screen.findByText("voice capture")).toBeOnTheScreen();
     expect(screen.getByText("queued (phone)")).toBeOnTheScreen();
     expect(screen.getByText("BI-1 acceptance smoke")).toBeOnTheScreen();
-    expect(screen.getByText("became")).toBeOnTheScreen();
+    // The became chip says WHAT the item became, not the raw event word.
+    expect(screen.getByText("note")).toBeOnTheScreen();
+    expect(screen.queryByText("became")).toBeNull();
     expect(screen.getByText("2026-07-08-ffff0000")).toBeOnTheScreen();
     expect(screen.getByText("open")).toBeOnTheScreen();
   });

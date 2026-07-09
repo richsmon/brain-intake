@@ -28,6 +28,7 @@ jest.mock("../src/lib/brain", () => ({
         },
       ],
       payload: { name: "payload.md", bytes: 235 },
+      transcript: "the spoken thought, word for word",
     }),
   })),
 }));
@@ -42,8 +43,12 @@ describe("ItemDetailScreen", () => {
     expect(await screen.findByText("2026-07-08-6683abec")).toBeOnTheScreen();
     expect(screen.getByText("captured")).toBeOnTheScreen();
     expect(screen.getByText("queued")).toBeOnTheScreen();
-    // "became" appears twice by design: the item-state chip and the timeline event.
+    // The item-state chip shows the became kind; the raw event name stays in the timeline.
+    expect(screen.getByText("note")).toBeOnTheScreen();
     expect(screen.getAllByText("became").length).toBeGreaterThanOrEqual(1);
+    // Voice items surface the transcript; audio stays the source of truth.
+    expect(screen.getByText(/the spoken thought, word for word/)).toBeOnTheScreen();
+    expect(screen.getByText(/audio is source of truth/i)).toBeOnTheScreen();
     expect(screen.getByText("source: text · sha: 6683abec")).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByText("Artifact (tap to copy)"));

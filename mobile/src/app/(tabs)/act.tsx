@@ -5,10 +5,12 @@ import { View } from "react-native";
 
 import { EmptyState } from "../../components/ds/empty-state";
 import { ScreenHeader } from "../../components/ds/screen-header";
+import { useTheme } from "../../theme";
 
 export default function ActScreen() {
+  const { colors } = useTheme();
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
       <ScreenHeader title="Act" />
       <EmptyState text="Nothing needs you. I'll ask when something does." />
     </View>

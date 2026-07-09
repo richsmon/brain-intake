@@ -1,6 +1,8 @@
 import { Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ModeBar, type ModeName } from "../../components/ds/mode-bar";
+import { useTheme } from "../../theme";
 
 // Structural subset of @react-navigation/bottom-tabs' BottomTabBarProps —
 // not a direct dependency, expo-router provides it at runtime.
@@ -32,10 +34,18 @@ function ModeBarTabs({ state, navigation }: TabBarProps) {
 }
 
 export default function TabsLayout() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   return (
     <Tabs
       initialRouteName="index"
-      screenOptions={{ headerShown: false }}
+      // sceneStyle themes the tab navigator's own scene container — the Stack's
+      // contentStyle does NOT reach it (the white-background TF6 lesson). Tab
+      // screens hide the native header, so the top safe-area inset lives here.
+      screenOptions={{
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.bgCanvas, paddingTop: insets.top },
+      }}
       tabBar={(props) => <ModeBarTabs {...props} />}
     >
       <Tabs.Screen name="items" options={{ title: "Read" }} />

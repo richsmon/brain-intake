@@ -41,19 +41,29 @@ export default function ItemDetailScreen() {
   if (error) return <Text style={[styles.message, { color: colors.danger }]}>{error}</Text>;
   if (!detail) return <Text style={[styles.message, { color: colors.ink3 }]}>Loading…</Text>;
 
-  const artifact = detail.events.find((event) => event.event === "became")?.artifact as
-    | string
-    | undefined;
+  const became = detail.events.find((event) => event.event === "became");
+  const artifact = became?.artifact as string | undefined;
+  const becameKind = typeof became?.kind === "string" ? became.kind : undefined;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={[styles.id, { color: colors.ink3 }]}>{detail.id}</Text>
       <View style={styles.headRow}>
-        <EventStateChip state={detail.state} />
+        <EventStateChip state={detail.state} label={becameKind} />
         <Text style={[styles.payload, { color: colors.ink3 }]}>
           {detail.payload.name} · {detail.payload.bytes} B
         </Text>
       </View>
+      {detail.transcript ? (
+        <View style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}>
+          <Text style={[styles.transcriptLabel, { color: colors.ink3 }]}>
+            Transcript · audio is source of truth
+          </Text>
+          <Text style={[styles.transcript, { color: colors.ink2 }]}>
+            “{detail.transcript.trim()}”
+          </Text>
+        </View>
+      ) : null}
       <View
         style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}
       >
@@ -112,6 +122,20 @@ const styles = StyleSheet.create({
     borderRadius: radii.card,
     padding: spacing.s4,
     paddingBottom: 0,
+  },
+  transcriptLabel: {
+    fontFamily: fonts.mono,
+    fontSize: typeScale.label - 1,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    fontWeight: "600",
+    marginBottom: spacing.s2,
+  },
+  transcript: {
+    fontSize: typeScale.bodySm,
+    lineHeight: typeScale.bodySm * 1.5,
+    fontStyle: "italic",
+    paddingBottom: spacing.s4,
   },
   artifact: {
     borderWidth: 1,

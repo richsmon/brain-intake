@@ -6,14 +6,24 @@ import { StyleSheet, Text, View } from "react-native";
 import { useTheme } from "../../theme";
 import { eventStateVisual, fonts, radii, typeScale } from "../../theme/tokens";
 
-export function EventStateChip({ state, bare = false }: { state: string; bare?: boolean }) {
+export function EventStateChip({
+  state,
+  label,
+  bare = false,
+}: {
+  state: string;
+  /** Override the visible word while keeping the state's glyph + color — e.g.
+   *  a `became` item shows WHAT it became ("note"), not the raw event word. */
+  label?: string;
+  bare?: boolean;
+}) {
   const { colors } = useTheme();
   const visual = eventStateVisual(state);
   const color = colors[visual.colorKey];
   return (
     <View style={[styles.chip, !bare && { backgroundColor: colors[visual.softKey] }]}>
       <Text style={[styles.glyph, { color }]}>{visual.glyph}</Text>
-      <Text style={[styles.label, { color }]}>{state}</Text>
+      <Text style={[styles.label, { color }]}>{label ?? state}</Text>
     </View>
   );
 }

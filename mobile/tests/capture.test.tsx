@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react-native";
+import { Keyboard } from "react-native";
 
 import CaptureScreen from "../src/app/(tabs)/index";
 import { captureText } from "../src/lib/brain";
@@ -55,6 +56,16 @@ describe("CaptureScreen", () => {
     await renderCapture();
     expect(screen.queryByText("Save to brain")).toBeNull();
     expect(captureTextMock).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the keyboard after saving a note", async () => {
+    const dismiss = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => {});
+    await renderCapture();
+    await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "note");
+    await fireEvent.press(screen.getByText("Save to brain"));
+    await screen.findByText("queued");
+    expect(dismiss).toHaveBeenCalled();
+    dismiss.mockRestore();
   });
 
   it("shows the three instrument-register capture targets", async () => {
