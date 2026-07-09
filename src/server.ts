@@ -224,7 +224,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
     const loopDisabled = existsSync(join(config.brainRoot, '.brain', 'loop-disabled'));
     const reportsDir = join(config.brainRoot, 'reports', 'brain-loop');
     const lastReport = existsSync(reportsDir)
-      ? (readdirSync(reportsDir).filter((f) => f.endsWith('.md')).sort().pop() ?? null)
+      ? (readdirSync(reportsDir).filter((f) => /^\d{4}-\d{2}-\d{2}.*\.md$/.test(f)).sort().pop() ?? null)
       : null;
     return { loopDisabled, lastReport };
   });

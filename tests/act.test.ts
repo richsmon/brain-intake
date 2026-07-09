@@ -147,6 +147,7 @@ describe('fleet + instant intake', () => {
     const root = tmpBrain();
     mkdirSync(join(root, 'reports', 'brain-loop'), { recursive: true });
     writeFileSync(join(root, 'reports', 'brain-loop', '2026-07-09-richsmon.md'), 'x');
+    writeFileSync(join(root, 'reports', 'brain-loop', 'README.md'), 'not a report');
     const app = buildServer({ brainRoot: root });
     expect((await app.inject({ method: 'GET', url: '/fleet' })).json()).toEqual({
       loopDisabled: false,
