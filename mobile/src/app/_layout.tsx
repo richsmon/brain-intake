@@ -1,9 +1,34 @@
 import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { AppState } from "react-native";
 
 import ShareIntentHandler from "../components/share-intent-handler";
 import { flushQueue } from "../lib/brain";
+import { ThemeProvider, useTheme } from "../theme";
+
+function ThemedApp() {
+  const { colors, scheme } = useTheme();
+  return (
+    <>
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <ShareIntentHandler />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.bgCanvas },
+          headerTintColor: colors.accent,
+          headerTitleStyle: { color: colors.ink1 },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: colors.bgCanvas },
+        }}
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="item/[id]" options={{ title: "Item" }} />
+        <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
+      </Stack>
+    </>
+  );
+}
 
 export default function RootLayout() {
   useEffect(() => {
@@ -15,13 +40,8 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <>
-      <ShareIntentHandler />
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="item/[id]" options={{ title: "Item" }} />
-        <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
-      </Stack>
-    </>
+    <ThemeProvider>
+      <ThemedApp />
+    </ThemeProvider>
   );
 }
