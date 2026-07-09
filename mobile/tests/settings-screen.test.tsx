@@ -2,6 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 
 import SettingsScreen from "../src/app/settings";
 import { getApi, settings } from "../src/lib/brain";
+import type { SettingsStore } from "../src/lib/settings";
+import { ThemeProvider } from "../src/theme";
 
 jest.mock("../src/lib/brain", () => ({
   settings: {
@@ -16,6 +18,25 @@ jest.mock("../src/lib/brain", () => ({
 const setBaseUrlMock = settings.setBaseUrl as jest.Mock;
 const getApiMock = getApi as jest.Mock;
 
+function memoryStore(): SettingsStore & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+  return {
+    data,
+    getItem: async (k) => data.get(k) ?? null,
+    setItem: async (k, v) => {
+      data.set(k, v);
+    },
+  };
+}
+
+function renderSettings(store = memoryStore()) {
+  return render(
+    <ThemeProvider systemScheme="dark" settingsStore={store}>
+      <SettingsScreen />
+    </ThemeProvider>,
+  );
+}
+
 describe("SettingsScreen", () => {
   beforeEach(() => {
     setBaseUrlMock.mockClear();
@@ -23,14 +44,14 @@ describe("SettingsScreen", () => {
   });
 
   it("shows the stored base URL and a live health result", async () => {
-    await render(<SettingsScreen />);
+    await renderSettings();
     const input = await screen.findByDisplayValue("http://100.96.207.63:8787");
     expect(input).toBeOnTheScreen();
     expect(await screen.findByText("ok — /Users/richsmon/code/universal-brain")).toBeOnTheScreen();
   });
 
   it("saves an edited URL and re-checks health", async () => {
-    await render(<SettingsScreen />);
+    await renderSettings();
     const input = await screen.findByDisplayValue("http://100.96.207.63:8787");
     await fireEvent.changeText(input, "http://other:8787");
     await fireEvent.press(screen.getByText("Save"));
@@ -44,7 +65,14 @@ describe("SettingsScreen", () => {
         throw new Error("down");
       },
     });
-    await render(<SettingsScreen />);
+    await renderSettings();
     expect(await screen.findByText("unreachable")).toBeOnTheScreen();
+  });
+
+  it("persists the theme preference from the picker", async () => {
+    const store = memoryStore();
+    await renderSettings(store);
+    await fireEvent.press(await screen.findByText("Light"));
+    expect(store.data.get("brain.theme")).toBe("light");
   });
 });

@@ -1,7 +1,7 @@
 // Recording state, built for no-look use: the whole bar is the stop target and
 // the pulse is sized to read in peripheral vision (the DS's one deliberate loop).
 
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text } from "react-native";
 
 import { useTheme } from "../../theme";
@@ -9,7 +9,7 @@ import { fonts, motion, radii, spacing, typeScale } from "../../theme/tokens";
 
 export function RecordingIndicator({ elapsed, onStop }: { elapsed: string; onStop: () => void }) {
   const { colors } = useTheme();
-  const pulse = useRef(new Animated.Value(1)).current;
+  const [pulse] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
     const loop = Animated.loop(
