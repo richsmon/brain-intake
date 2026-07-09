@@ -4,6 +4,9 @@ import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { createItem, itemState, readEvents, type InboxEvent } from './inbox.js';
 import { AUDIO_EXTS, transcribeItem } from './transcribe.js';
+import { makeApprovals, type Approvals } from './approvals.js';
+import type { IntakeTrigger } from './intake-trigger.js';
+import { answerQuestion, listOpenQuestions, type ExecFn } from './questions.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -12,6 +15,12 @@ export interface ServerConfig {
   /** Shell command printing a transcript of `{input}` to stdout (BI-06).
    * Unset = transcription disabled; audio items stay raw. */
   whisperCmd?: string;
+  /** Fires an instant intake pass after each capture (voice: after transcript). */
+  intakeTrigger?: IntakeTrigger;
+  /** Test seam for the questions writeback git commit. */
+  questionsExec?: ExecFn;
+  /** Test seam; defaults to gh-backed approvals in brainRoot. */
+  approvals?: Approvals;
 }
 
 const JSON_SOURCES = new Set(['text', 'share-sheet']);
@@ -99,9 +108,13 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       // lands later as a `transcribed` event on the same trail.
       const whisperCmd = config.whisperCmd;
       if (whisperCmd !== undefined && AUDIO_EXTS.has(ext)) {
-        void transcribeItem(join(inboxDir, result.id), whisperCmd).catch((err: unknown) => {
-          app.log.error({ err, item: result.id }, 'transcription failed');
-        });
+        void transcribeItem(join(inboxDir, result.id), whisperCmd)
+          .catch((err: unknown) => {
+            app.log.error({ err, item: result.id }, 'transcription failed');
+          })
+          .finally(() => config.intakeTrigger?.fire());
+      } else {
+        config.intakeTrigger?.fire();
       }
       return reply.code(201).send(result);
     }
@@ -116,6 +129,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       ...(body.originalName !== undefined ? { originalName: body.originalName } : {}),
       ...(body.deviceTs !== undefined ? { deviceTs: body.deviceTs } : {}),
     });
+    config.intakeTrigger?.fire();
     return reply.code(201).send(result);
   });
 
@@ -162,6 +176,57 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       ...(payload !== undefined ? { payload } : {}),
       ...(transcript !== undefined ? { transcript } : {}),
     };
+  });
+
+  const approvals = config.approvals ?? makeApprovals({ brainRoot: config.brainRoot });
+
+  app.get('/questions', async () => listOpenQuestions(config.brainRoot));
+
+  app.post<{ Params: { id: string } }>('/questions/:id/answer', async (req, reply) => {
+    const body = req.body as { text?: unknown } | null;
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!text) return reply.code(400).send({ error: 'expected {text}' });
+    const ok = await answerQuestion(config.brainRoot, req.params.id, text, config.questionsExec);
+    if (!ok) return reply.code(404).send({ error: 'unknown or already answered question' });
+    return { ok: true };
+  });
+
+  app.get('/approvals', async (_req, reply) => {
+    try {
+      return await approvals.list();
+    } catch (err) {
+      app.log.error({ err }, 'gh approvals list failed');
+      return reply.code(502).send({ error: 'gh unavailable' });
+    }
+  });
+
+  app.post<{ Params: { number: string } }>('/approvals/:number/approve', async (req, reply) => {
+    try {
+      await approvals.approve(Number(req.params.number));
+      return { ok: true };
+    } catch (err) {
+      app.log.error({ err }, 'gh merge failed');
+      return reply.code(502).send({ error: 'merge failed' });
+    }
+  });
+
+  app.post<{ Params: { number: string } }>('/approvals/:number/reject', async (req, reply) => {
+    try {
+      await approvals.reject(Number(req.params.number));
+      return { ok: true };
+    } catch (err) {
+      app.log.error({ err }, 'gh close failed');
+      return reply.code(502).send({ error: 'close failed' });
+    }
+  });
+
+  app.get('/fleet', async () => {
+    const loopDisabled = existsSync(join(config.brainRoot, '.brain', 'loop-disabled'));
+    const reportsDir = join(config.brainRoot, 'reports', 'brain-loop');
+    const lastReport = existsSync(reportsDir)
+      ? (readdirSync(reportsDir).filter((f) => f.endsWith('.md')).sort().pop() ?? null)
+      : null;
+    return { loopDisabled, lastReport };
   });
 
   return app;

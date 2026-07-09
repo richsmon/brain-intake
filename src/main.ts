@@ -1,10 +1,15 @@
 import { loadConfig } from './config.js';
+import { makeIntakeTrigger } from './intake-trigger.js';
 import { buildServer } from './server.js';
 
 const config = loadConfig(process.env);
+const instantIntake = process.env.INTAKE_TRIGGER !== '0';
 const app = buildServer({
   brainRoot: config.brainRoot,
   ...(config.whisperCmd !== undefined ? { whisperCmd: config.whisperCmd } : {}),
+  ...(instantIntake
+    ? { intakeTrigger: makeIntakeTrigger({ brainRoot: config.brainRoot }) }
+    : {}),
 });
 
 app

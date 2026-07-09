@@ -33,6 +33,27 @@ export interface CreateResult {
   deduped: boolean;
 }
 
+export interface Question {
+  id: string;
+  title: string;
+  body: string;
+  date?: string;
+  category?: string;
+}
+
+export interface Approval {
+  number: number;
+  title: string;
+  branch: string;
+  url: string;
+  verdict?: string;
+}
+
+export interface Fleet {
+  loopDisabled: boolean;
+  lastReport: string | null;
+}
+
 export interface Health {
   ok: boolean;
   brainRoot: string;
@@ -128,6 +149,34 @@ export function makeApi(baseUrl: string, fetchImpl: typeof fetch = fetch) {
 
     itemDetail(id: string): Promise<ItemDetail> {
       return request<ItemDetail>(`/items/${encodeURIComponent(id)}`);
+    },
+
+    listQuestions(): Promise<Question[]> {
+      return request<Question[]>("/questions");
+    },
+
+    answerQuestion(id: string, text: string): Promise<{ ok: boolean }> {
+      return request<{ ok: boolean }>(`/questions/${encodeURIComponent(id)}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+    },
+
+    listApprovals(): Promise<Approval[]> {
+      return request<Approval[]>("/approvals");
+    },
+
+    approvePr(number: number): Promise<{ ok: boolean }> {
+      return request<{ ok: boolean }>(`/approvals/${number}/approve`, { method: "POST" });
+    },
+
+    rejectPr(number: number): Promise<{ ok: boolean }> {
+      return request<{ ok: boolean }>(`/approvals/${number}/reject`, { method: "POST" });
+    },
+
+    fleet(): Promise<Fleet> {
+      return request<Fleet>("/fleet");
     },
   };
 }

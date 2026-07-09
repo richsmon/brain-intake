@@ -28,16 +28,23 @@ interface TabBarProps {
   navigation: { navigate: (name: string) => void };
 }
 
-/** New-`became` count since the founder last opened Read; offline → silent 0. */
-function useReadBadge() {
+/** Read = new-`became` since last look; Act = live pending count. Offline → 0. */
+function useBadges() {
   const [count, setCount] = useState(0);
+  const [actCount, setActCount] = useState(0);
   const itemsRef = useRef<ItemSummary[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      const items = await (await getApi()).listItems();
+      const api = await getApi();
+      const items = await api.listItems();
       itemsRef.current = items;
       setCount(unseenBecameCount(items, await loadSeenIds()));
+      const [questions, approvals] = await Promise.all([
+        api.listQuestions(),
+        api.listApprovals().catch(() => []),
+      ]);
+      setActCount(questions.length + approvals.length);
     } catch {
       // Offline — no badge is the honest answer.
     }
@@ -56,13 +63,13 @@ function useReadBadge() {
     void markBecameSeen(itemsRef.current);
   }, []);
 
-  return { count, markRead };
+  return { count, actCount, markRead };
 }
 
 export default function TabsLayout() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { count: readBadge, markRead } = useReadBadge();
+  const { count: readBadge, actCount: actBadge, markRead } = useBadges();
 
   const renderTabBar = ({ state, navigation }: TabBarProps) => {
     const activeRoute = state.routes[state.index]?.name ?? "index";
@@ -70,6 +77,7 @@ export default function TabsLayout() {
       <ModeBar
         active={ROUTE_TO_MODE[activeRoute] ?? "capture"}
         readBadge={readBadge}
+        actBadge={actBadge}
         onChange={(mode) => {
           if (mode === "read") markRead();
           navigation.navigate(MODE_TO_ROUTE[mode]);
