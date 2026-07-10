@@ -5,6 +5,7 @@ import { AppState } from "react-native";
 
 import ShareIntentHandler from "../components/share-intent-handler";
 import { flushQueue } from "../lib/brain";
+import { registerNotifyTask, runNotifyPass } from "../lib/notify-runtime";
 import { ThemeProvider, useTheme } from "../theme";
 
 function ThemedApp() {
@@ -33,8 +34,12 @@ function ThemedApp() {
 export default function RootLayout() {
   useEffect(() => {
     void flushQueue();
+    void registerNotifyTask().then(() => runNotifyPass()).catch(() => {});
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void flushQueue();
+      if (state === "active") {
+        void flushQueue();
+        void runNotifyPass().catch(() => {});
+      }
     });
     return () => subscription.remove();
   }, []);

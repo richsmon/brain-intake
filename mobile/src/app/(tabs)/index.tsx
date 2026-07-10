@@ -3,6 +3,7 @@
 // labels, confirmation is a state chip, never a sentence.
 
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } from "expo-audio";
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
@@ -80,6 +81,8 @@ export default function CaptureScreen() {
   }, [recording, recorder]);
 
   function confirmQueued() {
+    // capture-confirm — THE no-look confirm (DS haptic vocabulary)
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setError(null);
     setConfirmed(true);
     setCloudAsk(false); // privacy default: cloud consent is per-capture, never sticky
@@ -134,6 +137,7 @@ export default function CaptureScreen() {
 
   async function toggleRecording() {
     if (recording) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); // record-stop
       await recorder.stop();
       setRecording(false);
       const uri = recorder.uri;
@@ -153,6 +157,7 @@ export default function CaptureScreen() {
       }
       await recorder.prepareToRecordAsync();
       recorder.record();
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); // record-start
       setElapsed(0);
       setError(null);
       setRecording(true);
