@@ -40,11 +40,12 @@ function useBadges() {
       const items = await api.listItems();
       itemsRef.current = items;
       setCount(unseenBecameCount(items, await loadSeenIds()));
-      const [questions, approvals] = await Promise.all([
+      const [questions, approvals, cloudApprovals] = await Promise.all([
         api.listQuestions(),
         api.listApprovals().catch(() => []),
+        api.listCloudApprovals().catch(() => []),
       ]);
-      setActCount(questions.length + approvals.length);
+      setActCount(questions.length + approvals.length + cloudApprovals.length);
     } catch {
       // Offline — no badge is the honest answer.
     }

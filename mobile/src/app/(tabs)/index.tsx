@@ -27,7 +27,17 @@ import { RecordingIndicator } from "../../components/ds/recording-indicator";
 import { ScreenHeader } from "../../components/ds/screen-header";
 import { captureFile, captureText, pendingEntries } from "../../lib/brain";
 import { useTheme } from "../../theme";
-import { radii, spacing, typeScale } from "../../theme/tokens";
+import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
+
+// The founder decides what his thought is; Auto leaves it to the classifier.
+const KIND_CHOICES = [
+  { value: undefined, label: "Auto" },
+  { value: "task", label: "Task" },
+  { value: "idea", label: "Idea" },
+  { value: "note", label: "Note" },
+  { value: "from-people", label: "People" },
+  { value: "journal", label: "Journal" },
+] as const;
 
 function formatElapsed(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -42,6 +52,7 @@ export default function CaptureScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [queued, setQueued] = useState(0);
   const [cloudAsk, setCloudAsk] = useState(false);
+  const [kind, setKind] = useState<string | undefined>(undefined);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -72,6 +83,7 @@ export default function CaptureScreen() {
     setError(null);
     setConfirmed(true);
     setCloudAsk(false); // privacy default: cloud consent is per-capture, never sticky
+    setKind(undefined); // kind is per-capture too — Auto is the resting state
     refreshQueued();
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     confirmTimer.current = setTimeout(() => setConfirmed(false), 1800);
@@ -82,7 +94,7 @@ export default function CaptureScreen() {
     if (!trimmed) return;
     Keyboard.dismiss();
     // The @claude marker IS the cloud-consent protocol — visible in the payload.
-    await captureText(cloudAsk ? `${trimmed} @claude` : trimmed);
+    await captureText(cloudAsk ? `${trimmed} @claude` : trimmed, "text", kind);
     setText("");
     confirmQueued();
   }
@@ -214,6 +226,30 @@ export default function CaptureScreen() {
           </Pressable>
         ) : null}
 
+        <View style={styles.kindRow}>
+          {KIND_CHOICES.map((choice) => {
+            const active = choice.value === kind;
+            return (
+              <Pressable
+                key={choice.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => setKind(choice.value)}
+                style={[
+                  styles.kindChip,
+                  {
+                    borderColor: active ? colors.accent : colors.line,
+                    backgroundColor: active ? colors.accentSoft : colors.bgSurface,
+                  },
+                ]}
+              >
+                <Text style={[styles.kindChipLabel, { color: active ? colors.accent : colors.ink2 }]}>
+                  {choice.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <View style={styles.cloudRow}>
           <Text style={[styles.cloudLabel, { color: cloudAsk ? colors.accent : colors.ink3 }]}>
             Ask @claude
@@ -297,6 +333,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: spacing.s2,
+  },
+  kindRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.s2 - 2,
+  },
+  kindChip: {
+    minHeight: 32,
+    borderWidth: 1,
+    borderRadius: radii.chip,
+    paddingHorizontal: spacing.s3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  kindChipLabel: {
+    fontFamily: fonts.mono,
+    fontSize: typeScale.label,
+    letterSpacing: labelTracking / 2,
+    fontWeight: "600",
   },
   cloudLabel: {
     fontFamily: "Menlo",

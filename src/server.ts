@@ -33,7 +33,10 @@ interface PostItemBody {
   text: string;
   originalName?: string;
   deviceTs?: string;
+  kind?: string;
 }
+
+const INTAKE_KINDS = new Set(['idea', 'note', 'task', 'from-people', 'reference', 'journal', 'improvement']);
 
 function parseJsonBody(body: unknown): PostItemBody | null {
   if (typeof body !== 'object' || body === null) return null;
@@ -42,6 +45,7 @@ function parseJsonBody(body: unknown): PostItemBody | null {
   if (typeof b.text !== 'string' || b.text.length === 0) return null;
   if (b.originalName !== undefined && typeof b.originalName !== 'string') return null;
   if (b.deviceTs !== undefined && typeof b.deviceTs !== 'string') return null;
+  if (b.kind !== undefined && (typeof b.kind !== 'string' || !INTAKE_KINDS.has(b.kind))) return null;
   return b as unknown as PostItemBody;
 }
 
@@ -108,6 +112,10 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       if (cloud === '1' || cloud === 'true') {
         appendEvent(join(inboxDir, result.id), { event: 'cloud-requested', via: 'app-toggle' });
       }
+      const kindHint = multipartField(data.fields, 'kind') ?? query.kind;
+      if (kindHint !== undefined && INTAKE_KINDS.has(kindHint)) {
+        appendEvent(join(inboxDir, result.id), { event: 'kind-hint', kind: kindHint });
+      }
       // Background-task shape: capture answers immediately; the transcript
       // lands later as a `transcribed` event on the same trail.
       const whisperCmd = config.whisperCmd;
@@ -133,6 +141,9 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       ...(body.originalName !== undefined ? { originalName: body.originalName } : {}),
       ...(body.deviceTs !== undefined ? { deviceTs: body.deviceTs } : {}),
     });
+    if (body.kind !== undefined) {
+      appendEvent(join(inboxDir, result.id), { event: 'kind-hint', kind: body.kind });
+    }
     config.intakeTrigger?.fire();
     return reply.code(201).send(result);
   });
@@ -225,6 +236,77 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       app.log.error({ err }, 'gh close failed');
       return reply.code(502).send({ error: 'close failed' });
     }
+  });
+
+  app.get('/cloud-approvals', async () => {
+    const out = [];
+    for (const id of itemDirs(inboxDir)) {
+      const events = readEvents(join(inboxDir, id));
+      if (itemState(events) !== 'cloud-approval') continue;
+      const pending = [...events].reverse().find((e) => e.event === 'cloud-approval');
+      out.push({
+        id,
+        title: typeof pending?.title === 'string' ? pending.title : id,
+        reason: typeof pending?.reason === 'string' ? pending.reason : '',
+      });
+    }
+    return out;
+  });
+
+  app.post<{ Params: { id: string } }>('/items/:id/cloud-approve', async (req, reply) => {
+    const dir = join(inboxDir, req.params.id);
+    const events = existsSync(dir) ? readEvents(dir) : [];
+    if (events.length === 0 || itemState(events) !== 'cloud-approval') {
+      return reply.code(404).send({ error: 'no pending cloud approval' });
+    }
+    appendEvent(dir, { event: 'cloud-requested', via: 'app-approve' });
+    appendEvent(dir, { event: 'queued' });
+    config.intakeTrigger?.fire();
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>('/items/:id/keep-local', async (req, reply) => {
+    const dir = join(inboxDir, req.params.id);
+    const events = existsSync(dir) ? readEvents(dir) : [];
+    if (events.length === 0 || itemState(events) !== 'cloud-approval') {
+      return reply.code(404).send({ error: 'no pending cloud approval' });
+    }
+    appendEvent(dir, { event: 'needs-human', reason: 'founder kept it local — route by hand' });
+    return { ok: true };
+  });
+
+  app.get('/digest', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const counts = { captured: 0, became: 0, categorized: 0, needsHuman: 0, cloudApprovals: 0 };
+    const highlights = [];
+    for (const id of itemDirs(inboxDir)) {
+      const events = readEvents(join(inboxDir, id));
+      if (events.length === 0) continue;
+      const state = itemState(events);
+      if (state === 'cloud-approval') counts.cloudApprovals += 1;
+      const todays = events.filter((e) => typeof e.ts === 'string' && e.ts.startsWith(today));
+      if (todays.length === 0) continue;
+      if (todays.some((e) => e.event === 'captured')) counts.captured += 1;
+      if (todays.some((e) => e.event === 'became')) counts.became += 1;
+      if (todays.some((e) => e.event === 'categorized')) counts.categorized += 1;
+      if (todays.some((e) => e.event === 'needs-human')) counts.needsHuman += 1;
+      if (['became', 'categorized', 'needs-human'].includes(state)) {
+        const outcome = events.find((e) => e.event === 'became' || e.event === 'categorized');
+        const title = lastClassifiedTitle(events);
+        highlights.push({
+          id,
+          state,
+          ...(title !== undefined ? { title } : {}),
+          ...(typeof outcome?.kind === 'string' ? { kind: outcome.kind } : {}),
+        });
+      }
+    }
+    const loopDisabled = existsSync(join(config.brainRoot, '.brain', 'loop-disabled'));
+    const reportsDir = join(config.brainRoot, 'reports', 'brain-loop');
+    const lastReport = existsSync(reportsDir)
+      ? (readdirSync(reportsDir).filter((f) => /^\d{4}-\d{2}-\d{2}.*\.md$/.test(f)).sort().pop() ?? null)
+      : null;
+    return { date: today, counts, highlights: highlights.slice(-8).reverse(), loopDisabled, lastReport };
   });
 
   app.get('/fleet', async () => {

@@ -22,7 +22,7 @@ export function appendEvent(itemDir: string, event: InboxEvent): void {
   appendFileSync(join(itemDir, EVENT_FILE), `${JSON.stringify(stamped)}\n`, 'utf-8');
 }
 
-export const TERMINAL_EVENTS = new Set(['became', 'needs-human', 'deferred', 'categorized']);
+export const TERMINAL_EVENTS = new Set(['became', 'needs-human', 'deferred', 'categorized', 'cloud-approval']);
 
 export const CAPTURE_SOURCES = new Set(['share-sheet', 'voice', 'text', 'photo']);
 
@@ -73,7 +73,7 @@ export function createItem(inboxDir: string, payload: Buffer, opts: CreateItemOp
   return { id, deduped: false };
 }
 
-export type ItemState = 'open' | 'became' | 'needs-human' | 'deferred' | 'categorized';
+export type ItemState = 'open' | 'became' | 'needs-human' | 'deferred' | 'categorized' | 'cloud-approval';
 
 /**
  * Derive the item's state from its trail. Per inbox/README a `queued` event

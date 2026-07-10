@@ -222,3 +222,76 @@ describe('intake v1 contract on the server', () => {
     expect(res.json().state).toBe('deferred');
   });
 });
+
+describe('intake v1.1: kind hint, cloud approvals, digest', () => {
+  test('text capture with kind stores a kind-hint event', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'mlieko', kind: 'task' } })
+    ).json();
+    const events = (await app.inject({ method: 'GET', url: `/items/${id}` })).json().events;
+    expect(events.some((e: { event: string; kind?: string }) => e.event === 'kind-hint' && e.kind === 'task')).toBe(true);
+  });
+
+  test('invalid kind is rejected', async () => {
+    const app = buildServer({ brainRoot: tmpBrain() });
+    const res = await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'x', kind: 'nonsense' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test('cloud-approvals lists pending items; approve re-queues with cloud-requested and fires intake', async () => {
+    const root = tmpBrain();
+    const fire = vi.fn();
+    const app = buildServer({ brainRoot: root, intakeTrigger: { fire } });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'nejasné' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), { event: 'cloud-approval', title: 'Nejasné', reason: 'confidence 0.4 < 0.6' });
+    fire.mockClear();
+
+    const list = (await app.inject({ method: 'GET', url: '/cloud-approvals' })).json();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id, title: 'Nejasné' });
+
+    const res = await app.inject({ method: 'POST', url: `/items/${id}/cloud-approve` });
+    expect(res.statusCode).toBe(200);
+    const events = (await app.inject({ method: 'GET', url: `/items/${id}` })).json().events;
+    const names = events.map((e: { event: string }) => e.event);
+    expect(names).toContain('cloud-requested');
+    expect(names[names.length - 1]).toBe('queued'); // re-opened
+    expect(fire).toHaveBeenCalled();
+    // approved item no longer pending
+    expect((await app.inject({ method: 'GET', url: '/cloud-approvals' })).json()).toHaveLength(0);
+  });
+
+  test('keep-local resolves the pending approval into a needs-human trail', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'nejasné 2' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), { event: 'cloud-approval', title: 'Nejasné 2', reason: 'confidence 0.4 < 0.6' });
+    const res = await app.inject({ method: 'POST', url: `/items/${id}/keep-local` });
+    expect(res.statusCode).toBe(200);
+    const state = (await app.inject({ method: 'GET', url: `/items/${id}` })).json().state;
+    expect(state).toBe('needs-human');
+  });
+
+  test('digest summarizes the day: counts, highlights, fleet', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'digest me' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), { event: 'categorized', kind: 'task', labels: ['nakupy'], workspace: 'life' });
+
+    const res = await app.inject({ method: 'GET', url: '/digest' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.counts.captured).toBe(1);
+    expect(body.counts.categorized).toBe(1);
+    expect(body.highlights[0]).toMatchObject({ id, state: 'categorized', kind: 'task' });
+    expect(body).toHaveProperty('loopDisabled');
+  });
+});

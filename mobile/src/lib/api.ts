@@ -55,6 +55,20 @@ export interface Fleet {
   lastReport: string | null;
 }
 
+export interface CloudApproval {
+  id: string;
+  title: string;
+  reason: string;
+}
+
+export interface Digest {
+  date: string;
+  counts: { captured: number; became: number; categorized: number; needsHuman: number; cloudApprovals: number };
+  highlights: { id: string; state: string; title?: string; kind?: string }[];
+  loopDisabled: boolean;
+  lastReport: string | null;
+}
+
 export interface Health {
   ok: boolean;
   brainRoot: string;
@@ -115,7 +129,7 @@ export function makeApi(baseUrl: string, fetchImpl: typeof fetch = fetch) {
       return request<Health>("/health");
     },
 
-    createText(input: { source: TextSource; text: string; deviceTs?: string }): Promise<CreateResult> {
+    createText(input: { source: TextSource; text: string; deviceTs?: string; kind?: string }): Promise<CreateResult> {
       return request<CreateResult>("/items", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -178,6 +192,22 @@ export function makeApi(baseUrl: string, fetchImpl: typeof fetch = fetch) {
 
     fleet(): Promise<Fleet> {
       return request<Fleet>("/fleet");
+    },
+
+    listCloudApprovals(): Promise<CloudApproval[]> {
+      return request<CloudApproval[]>("/cloud-approvals");
+    },
+
+    cloudApprove(id: string): Promise<{ ok: boolean }> {
+      return request<{ ok: boolean }>(`/items/${encodeURIComponent(id)}/cloud-approve`, { method: "POST" });
+    },
+
+    keepLocal(id: string): Promise<{ ok: boolean }> {
+      return request<{ ok: boolean }>(`/items/${encodeURIComponent(id)}/keep-local`, { method: "POST" });
+    },
+
+    digest(): Promise<Digest> {
+      return request<Digest>("/digest");
     },
   };
 }

@@ -34,6 +34,9 @@ function apiWith(overrides: Record<string, unknown> = {}) {
       },
     ],
     fleet: async () => ({ loopDisabled: false, lastReport: "2026-07-09-richsmon.md" }),
+    listCloudApprovals: async () => [],
+    cloudApprove: jest.fn(async () => ({ ok: true })),
+    keepLocal: jest.fn(async () => ({ ok: true })),
     answerQuestion,
     approvePr,
     rejectPr: jest.fn(async () => ({ ok: true })),
@@ -91,5 +94,26 @@ describe("ActScreen", () => {
     expect(
       await screen.findByText("Nothing needs you. I'll ask when something does."),
     ).toBeOnTheScreen();
+  });
+});
+
+describe("cloud approvals in Act", () => {
+  it("shows the pending card and approves cloud analysis", async () => {
+    const cloudApprove = jest.fn(async () => ({ ok: true }));
+    getApiMock.mockResolvedValue(
+      apiWith({
+        listQuestions: async () => [],
+        listApprovals: async () => [],
+        listCloudApprovals: async () => [
+          { id: "2026-07-10-abc", title: "Nejasná vec", reason: "confidence 0.4 < 0.6" },
+        ],
+        cloudApprove,
+        keepLocal: jest.fn(async () => ({ ok: true })),
+      }),
+    );
+    await renderAct();
+    expect(await screen.findByText("Nejasná vec")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByText("Ask @claude"));
+    expect(cloudApprove).toHaveBeenCalledWith("2026-07-10-abc");
   });
 });

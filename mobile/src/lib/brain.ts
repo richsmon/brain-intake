@@ -50,8 +50,17 @@ export async function getApi(): Promise<Api> {
 
 /** Background-task shape: capture returns as soon as the entry is queued
  * locally; the flush attempt runs fire-and-forget. */
-export async function captureText(text: string, source: TextSource = "text"): Promise<void> {
-  await getQueue().enqueue({ kind: "text", source, text });
+export async function captureText(
+  text: string,
+  source: TextSource = "text",
+  intakeKind?: string,
+): Promise<void> {
+  await getQueue().enqueue({
+    kind: "text",
+    source,
+    text,
+    ...(intakeKind !== undefined ? { intakeKind } : {}),
+  });
   void flushQueue();
 }
 

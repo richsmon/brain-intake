@@ -48,7 +48,7 @@ describe("CaptureScreen", () => {
     await fireEvent.changeText(input, "  remember this  ");
     await fireEvent.press(screen.getByText("Save to brain"));
     await screen.findByText("queued");
-    expect(captureTextMock).toHaveBeenCalledWith("remember this");
+    expect(captureTextMock).toHaveBeenCalledWith("remember this", "text", undefined);
     expect(input.props.value).toBe("");
   });
 
@@ -82,13 +82,30 @@ describe("cloud consent toggle", () => {
     await fireEvent(screen.getByRole("switch"), "valueChange", true);
     await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "deep one");
     await fireEvent.press(screen.getByText("Save to brain"));
-    expect(captureTextMock).toHaveBeenCalledWith("deep one @claude");
+    expect(captureTextMock).toHaveBeenCalledWith("deep one @claude", "text", undefined);
   });
 
   it("stays local by default — no marker without consent", async () => {
     await renderCapture();
     await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "private one");
     await fireEvent.press(screen.getByText("Save to brain"));
-    expect(captureTextMock).toHaveBeenCalledWith("private one");
+    expect(captureTextMock).toHaveBeenCalledWith("private one", "text", undefined);
+  });
+});
+
+describe("kind picker", () => {
+  it("passes the founder's kind choice with the capture", async () => {
+    await renderCapture();
+    await fireEvent.press(screen.getByText("Task"));
+    await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "mlieko");
+    await fireEvent.press(screen.getByText("Save to brain"));
+    expect(captureTextMock).toHaveBeenCalledWith("mlieko", "text", "task");
+  });
+
+  it("defaults to Auto — classifier decides", async () => {
+    await renderCapture();
+    await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "voľná myšlienka");
+    await fireEvent.press(screen.getByText("Save to brain"));
+    expect(captureTextMock).toHaveBeenCalledWith("voľná myšlienka", "text", undefined);
   });
 });

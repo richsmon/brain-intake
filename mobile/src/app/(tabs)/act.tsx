@@ -9,7 +9,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInp
 
 import { EmptyState } from "../../components/ds/empty-state";
 import { ScreenHeader } from "../../components/ds/screen-header";
-import type { Approval, Fleet, Question } from "../../lib/api";
+import type { Approval, CloudApproval, Fleet, Question } from "../../lib/api";
 import { getApi } from "../../lib/brain";
 import { useTheme } from "../../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
@@ -32,6 +32,62 @@ function FleetLine({ fleet }: { fleet: Fleet | null }) {
       <Text numberOfLines={1} style={[styles.fleetText, { color: colors.ink2 }]}>
         {text}
       </Text>
+    </View>
+  );
+}
+
+function CloudApprovalCard({ pending, onDone }: { pending: CloudApproval; onDone: () => void }) {
+  const { colors } = useTheme();
+  const [busy, setBusy] = useState(false);
+
+  function act(kind: "approve" | "keep") {
+    void (async () => {
+      setBusy(true);
+      try {
+        const api = await getApi();
+        await (kind === "approve" ? api.cloudApprove(pending.id) : api.keepLocal(pending.id));
+        onDone();
+      } catch {
+        setBusy(false);
+        Alert.alert("That didn't reach the brain", "Check the tailnet and try again.");
+      }
+    })();
+  }
+
+  return (
+    <View style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}>
+      <View style={styles.cardHead}>
+        <Text style={[styles.meta, { color: colors.stateRouted }]}>↑ cloud approval</Text>
+        <Text style={[styles.meta, { color: colors.ink3 }]}>{pending.reason}</Text>
+      </View>
+      <Text style={[styles.cardTitle, { color: colors.ink1 }]}>{pending.title}</Text>
+      <Text style={[styles.cardBody, { color: colors.ink2 }]}>
+        I couldn't place this locally. Send it to Claude for a second opinion?
+      </Text>
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => act("approve")}
+          style={({ pressed }) => [
+            styles.primary,
+            styles.action,
+            { backgroundColor: pressed ? colors.accentStrong : colors.accent },
+          ]}
+        >
+          <Text style={[styles.primaryLabel, { color: colors.inkInverse }]}>
+            {busy ? "Working…" : "Ask @claude"}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => act("keep")}
+          style={[styles.secondary, styles.action, { borderColor: colors.lineStrong }]}
+        >
+          <Text style={[styles.secondaryLabel, { color: colors.ink1 }]}>Keep local</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -180,15 +236,21 @@ export default function ActScreen() {
   const { colors } = useTheme();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [cloudApprovals, setCloudApprovals] = useState<CloudApproval[]>([]);
   const [fleet, setFleet] = useState<Fleet | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const api = await getApi();
-      const [qs, fl] = await Promise.all([api.listQuestions(), api.fleet()]);
+      const [qs, fl, ca] = await Promise.all([
+        api.listQuestions(),
+        api.fleet(),
+        api.listCloudApprovals().catch(() => []),
+      ]);
       setQuestions(qs);
       setFleet(fl);
+      setCloudApprovals(ca);
       setApprovals(await api.listApprovals());
     } catch {
       // Offline — Act simply has nothing actionable to show.
@@ -207,7 +269,7 @@ export default function ActScreen() {
     setRefreshing(false);
   }, [load]);
 
-  const empty = questions.length === 0 && approvals.length === 0;
+  const empty = questions.length === 0 && approvals.length === 0 && cloudApprovals.length === 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
@@ -221,6 +283,12 @@ export default function ActScreen() {
           <EmptyState text="Nothing needs you. I'll ask when something does." />
         ) : (
           <>
+            {cloudApprovals.length > 0 ? (
+              <SectionLabel text={`Cloud approvals · ${cloudApprovals.length}`} />
+            ) : null}
+            {cloudApprovals.map((pending) => (
+              <CloudApprovalCard key={pending.id} pending={pending} onDone={() => void load()} />
+            ))}
             {approvals.length > 0 ? <SectionLabel text={`Approvals · ${approvals.length}`} /> : null}
             {approvals.map((approval) => (
               <ApproveCard key={approval.number} approval={approval} onDone={() => void load()} />

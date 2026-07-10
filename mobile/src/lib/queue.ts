@@ -17,7 +17,7 @@ export interface QueueFs {
 }
 
 export type Capture =
-  | { kind: "text"; source: TextSource; text: string }
+  | { kind: "text"; source: TextSource; text: string; intakeKind?: string }
   | { kind: "file"; source: FileSource; sourceUri: string; ext: FileExt; originalName?: string; cloud?: boolean };
 
 export interface QueueEntry {
@@ -31,6 +31,8 @@ export interface QueueEntry {
   tries: number;
   /** Founder explicitly allowed cloud (Claude) analysis for this capture. */
   cloud?: boolean;
+  /** Founder's explicit type choice — the classifier must not override it. */
+  intakeKind?: string;
   /** Message of the most recent flush failure — surfaced in the Items UI so a
    * stuck entry explains itself. */
   lastError?: string;
@@ -96,6 +98,9 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
           ? { originalName: capture.originalName }
           : {}),
         ...(capture.kind === "file" && capture.cloud ? { cloud: true } : {}),
+        ...(capture.kind === "text" && capture.intakeKind !== undefined
+          ? { intakeKind: capture.intakeKind }
+          : {}),
         deviceTs: ts,
         createdAt: ts,
         tries: 0,
@@ -128,6 +133,7 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
               source: entry.source as TextSource,
               text: await fs.readText(payloadPath(entry)),
               deviceTs: entry.deviceTs,
+              ...(entry.intakeKind !== undefined ? { kind: entry.intakeKind } : {}),
             });
           } else if (uploadFile) {
             await uploadFile(payloadPath(entry), {
