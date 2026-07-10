@@ -104,6 +104,10 @@ export const EVENT_STATES = {
   became: { glyph: "✦", colorKey: "stateBecame", softKey: "stateBecameSoft" },
   "needs-human": { glyph: "●", colorKey: "stateNeedsHuman", softKey: "stateNeedsHumanSoft" },
   transcribed: { glyph: "≋", colorKey: "stateQueued", softKey: "stateQueuedSoft" },
+  screened: { glyph: "◌", colorKey: "stateQueued", softKey: "stateQueuedSoft" },
+  "cloud-requested": { glyph: "↑", colorKey: "stateRouted", softKey: "stateRoutedSoft" },
+  deferred: { glyph: "◻", colorKey: "stateQueued", softKey: "stateQueuedSoft" },
+  categorized: { glyph: "▤", colorKey: "stateClassified", softKey: "stateClassifiedSoft" },
 } as const;
 
 export type EventStateName = keyof typeof EVENT_STATES;

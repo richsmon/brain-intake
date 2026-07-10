@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { createItem, itemState, readEvents, type InboxEvent } from './inbox.js';
+import { appendEvent, createItem, itemState, readEvents, type InboxEvent } from './inbox.js';
 import { AUDIO_EXTS, transcribeItem } from './transcribe.js';
 import { makeApprovals, type Approvals } from './approvals.js';
 import type { IntakeTrigger } from './intake-trigger.js';
@@ -97,6 +97,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       }
 
       const deviceTs = multipartField(data.fields, 'deviceTs') ?? query.deviceTs;
+      const cloud = multipartField(data.fields, 'cloud') ?? query.cloud;
       const buf = await data.toBuffer(); // throws 413 over the fileSize limit
       const result = createItem(inboxDir, buf, {
         source,
@@ -104,6 +105,9 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         originalName: data.filename,
         ...(deviceTs !== undefined ? { deviceTs } : {}),
       });
+      if (cloud === '1' || cloud === 'true') {
+        appendEvent(join(inboxDir, result.id), { event: 'cloud-requested', via: 'app-toggle' });
+      }
       // Background-task shape: capture answers immediately; the transcript
       // lands later as a `transcribed` event on the same trail.
       const whisperCmd = config.whisperCmd;
@@ -139,14 +143,17 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       const events = readEvents(join(inboxDir, id));
       if (events.length === 0) continue;
       const title = lastClassifiedTitle(events);
-      const became = events.find((e) => e.event === 'became');
-      const kind = typeof became?.kind === 'string' ? became.kind : undefined;
+      const outcome = events.find((e) => e.event === 'became' || e.event === 'categorized');
+      const kind = typeof outcome?.kind === 'string' ? outcome.kind : undefined;
+      const labelled = [...events].reverse().find((e) => Array.isArray(e.labels));
+      const labels = labelled?.labels as string[] | undefined;
       out.push({
         id,
         state: itemState(events),
         lastEvent: events[events.length - 1]!.event,
         ...(title !== undefined ? { title } : {}),
         ...(kind !== undefined ? { kind } : {}),
+        ...(labels !== undefined ? { labels } : {}),
       });
     }
     return out;

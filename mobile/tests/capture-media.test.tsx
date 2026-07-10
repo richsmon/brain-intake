@@ -95,6 +95,7 @@ describe("CaptureScreen media capture", () => {
     expect(captureFileMock).toHaveBeenCalledWith({
       source: "voice",
       uri: "file:///recordings/note.m4a",
+      cloud: false,
     });
   });
 

@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
+import { appendEvent } from '../src/inbox.js';
 import { buildServer } from '../src/server.js';
 import { makeIntakeTrigger } from '../src/intake-trigger.js';
 import { makeApprovals } from '../src/approvals.js';
@@ -187,5 +188,37 @@ describe('makeIntakeTrigger', () => {
     exits.shift()!();
     expect(spawned).toHaveLength(2); // nothing else pending
     expect(spawned[0]).toContain('--intake-only');
+  });
+});
+
+describe('intake v1 contract on the server', () => {
+  test('categorized and deferred are terminal states; kind+labels surface in the list', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'kúpiť mlieko' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), { event: 'screened', channel: 'local', reason: 'default-local' });
+    appendEvent(join(root, 'inbox', id), {
+      event: 'classified', type: 'task', workspace: 'life', title: 'Kúpiť mlieko',
+      labels: ['nakupy'], classifier: 'local', confidence: 0.9,
+    });
+    appendEvent(join(root, 'inbox', id), { event: 'categorized', kind: 'task', labels: ['nakupy'], workspace: 'life' });
+
+    const res = await app.inject({ method: 'GET', url: '/items' });
+    expect(res.json()).toEqual([
+      { id, state: 'categorized', lastEvent: 'categorized', title: 'Kúpiť mlieko', kind: 'task', labels: ['nakupy'] },
+    ]);
+  });
+
+  test('deferred photos read as deferred, not open', async () => {
+    const root = tmpBrain();
+    const app = buildServer({ brainRoot: root });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'placeholder' } })
+    ).json();
+    appendEvent(join(root, 'inbox', id), { event: 'deferred', reason: 'photo — stored for manual handling' });
+    const res = await app.inject({ method: 'GET', url: `/items/${id}` });
+    expect(res.json().state).toBe('deferred');
   });
 });

@@ -18,10 +18,11 @@ let queue: Queue | null = null;
  * server never depends on multipart field ordering. */
 async function uploadFileNative(
   payloadPath: string,
-  meta: { source: FileSource; name: string; ext: keyof typeof MIME_BY_EXT; deviceTs: string },
+  meta: { source: FileSource; name: string; ext: keyof typeof MIME_BY_EXT; deviceTs: string; cloud?: boolean },
 ): Promise<void> {
   const base = (await settings.getBaseUrl()).replace(/\/+$/, "");
   const query = new URLSearchParams({ source: meta.source, deviceTs: meta.deviceTs });
+  if (meta.cloud) query.set("cloud", "1");
   const result = await new File(payloadPath).upload(`${base}/items?${query.toString()}`, {
     uploadType: UploadType.MULTIPART,
     fieldName: "file",
@@ -59,6 +60,7 @@ export async function captureText(text: string, source: TextSource = "text"): Pr
 export async function captureFile(input: {
   source: FileSource;
   uri: string;
+  cloud?: boolean;
   name?: string;
   sizeBytes?: number;
 }): Promise<FileCheck> {
@@ -73,6 +75,7 @@ export async function captureFile(input: {
     sourceUri: input.uri,
     ext: check.ext,
     originalName: input.name,
+    ...(input.cloud ? { cloud: true } : {}),
   });
   void flushQueue();
   return check;

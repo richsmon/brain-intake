@@ -14,6 +14,7 @@ export interface InboxEvent {
 
 export interface ItemSummary {
   kind?: string;
+  labels?: string[];
   id: string;
   state: string;
   lastEvent: string;

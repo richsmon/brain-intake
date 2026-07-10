@@ -75,3 +75,20 @@ describe("CaptureScreen", () => {
     screen.getByText("Photo");
   });
 });
+
+describe("cloud consent toggle", () => {
+  it("appends the @claude marker to text captures when asked", async () => {
+    await renderCapture();
+    await fireEvent(screen.getByRole("switch"), "valueChange", true);
+    await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "deep one");
+    await fireEvent.press(screen.getByText("Save to brain"));
+    expect(captureTextMock).toHaveBeenCalledWith("deep one @claude");
+  });
+
+  it("stays local by default — no marker without consent", async () => {
+    await renderCapture();
+    await fireEvent.changeText(screen.getByPlaceholderText("Text note…"), "private one");
+    await fireEvent.press(screen.getByText("Save to brain"));
+    expect(captureTextMock).toHaveBeenCalledWith("private one");
+  });
+});

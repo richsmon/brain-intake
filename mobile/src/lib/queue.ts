@@ -18,7 +18,7 @@ export interface QueueFs {
 
 export type Capture =
   | { kind: "text"; source: TextSource; text: string }
-  | { kind: "file"; source: FileSource; sourceUri: string; ext: FileExt; originalName?: string };
+  | { kind: "file"; source: FileSource; sourceUri: string; ext: FileExt; originalName?: string; cloud?: boolean };
 
 export interface QueueEntry {
   id: string;
@@ -29,6 +29,8 @@ export interface QueueEntry {
   deviceTs: string;
   createdAt: string;
   tries: number;
+  /** Founder explicitly allowed cloud (Claude) analysis for this capture. */
+  cloud?: boolean;
   /** Message of the most recent flush failure — surfaced in the Items UI so a
    * stuck entry explains itself. */
   lastError?: string;
@@ -44,7 +46,7 @@ export interface FlushReport {
  * Must throw ApiError on failure. */
 export type FileUploader = (
   payloadPath: string,
-  meta: { source: FileSource; name: string; ext: FileExt; deviceTs: string },
+  meta: { source: FileSource; name: string; ext: FileExt; deviceTs: string; cloud?: boolean },
 ) => Promise<void>;
 
 interface QueueDeps {
@@ -93,6 +95,7 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
         ...(capture.kind === "file" && capture.originalName !== undefined
           ? { originalName: capture.originalName }
           : {}),
+        ...(capture.kind === "file" && capture.cloud ? { cloud: true } : {}),
         deviceTs: ts,
         createdAt: ts,
         tries: 0,
@@ -132,6 +135,7 @@ export function makeQueue({ fs, dir, newId = defaultNewId, now = () => new Date(
               name: entry.originalName ?? `payload.${entry.ext}`,
               ext: entry.ext as FileExt,
               deviceTs: entry.deviceTs,
+              ...(entry.cloud ? { cloud: true } : {}),
             });
           } else {
             await api.createFile({

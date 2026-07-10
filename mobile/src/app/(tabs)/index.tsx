@@ -14,6 +14,7 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -40,6 +41,7 @@ export default function CaptureScreen() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [queued, setQueued] = useState(0);
+  const [cloudAsk, setCloudAsk] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -69,6 +71,7 @@ export default function CaptureScreen() {
   function confirmQueued() {
     setError(null);
     setConfirmed(true);
+    setCloudAsk(false); // privacy default: cloud consent is per-capture, never sticky
     refreshQueued();
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     confirmTimer.current = setTimeout(() => setConfirmed(false), 1800);
@@ -78,7 +81,8 @@ export default function CaptureScreen() {
     const trimmed = text.trim();
     if (!trimmed) return;
     Keyboard.dismiss();
-    await captureText(trimmed);
+    // The @claude marker IS the cloud-consent protocol — visible in the payload.
+    await captureText(cloudAsk ? `${trimmed} @claude` : trimmed);
     setText("");
     confirmQueued();
   }
@@ -125,7 +129,7 @@ export default function CaptureScreen() {
         setError("That recording failed. Try again.");
         return;
       }
-      const outcome = await captureFile({ source: "voice", uri });
+      const outcome = await captureFile({ source: "voice", uri, cloud: cloudAsk });
       if (outcome.ok) confirmQueued();
       else setError(outcome.reason);
     } else {
@@ -210,6 +214,17 @@ export default function CaptureScreen() {
           </Pressable>
         ) : null}
 
+        <View style={styles.cloudRow}>
+          <Text style={[styles.cloudLabel, { color: cloudAsk ? colors.accent : colors.ink3 }]}>
+            Ask @claude
+          </Text>
+          <Switch
+            value={cloudAsk}
+            onValueChange={setCloudAsk}
+            trackColor={{ false: colors.bgSurface2, true: colors.accentSoft }}
+            thumbColor={cloudAsk ? colors.accent : colors.ink3}
+          />
+        </View>
         {recording ? (
           <RecordingIndicator elapsed={formatElapsed(elapsed)} onStop={toggleRecording} />
         ) : (
@@ -276,5 +291,18 @@ const styles = StyleSheet.create({
   targets: {
     flexDirection: "row",
     gap: spacing.s3 - 2,
+  },
+  cloudRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: spacing.s2,
+  },
+  cloudLabel: {
+    fontFamily: "Menlo",
+    fontSize: 11,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    fontWeight: "600",
   },
 });
