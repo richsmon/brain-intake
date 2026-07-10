@@ -9,9 +9,12 @@ import { useTheme } from "../../theme";
 import { eventStateVisual, fonts, spacing, typeScale } from "../../theme/tokens";
 
 export interface TimelineEvent {
+  /** Raw event name — drives glyph/color. */
   event: string;
-  ts?: string;
-  extras?: string;
+  /** Plain-words headline (humanize-events). */
+  title: string;
+  detail?: string;
+  time?: string;
 }
 
 export function EventTimeline({ events }: { events: TimelineEvent[] }) {
@@ -30,11 +33,11 @@ export function EventTimeline({ events }: { events: TimelineEvent[] }) {
             </View>
             <View style={styles.body}>
               <View style={styles.head}>
-                <Text style={[styles.name, { color }]}>{entry.event}</Text>
-                {entry.ts ? <Text style={[styles.ts, { color: colors.ink3 }]}>{entry.ts}</Text> : null}
+                <Text style={[styles.name, { color: colors.ink1 }]}>{entry.title}</Text>
+                {entry.time ? <Text style={[styles.ts, { color: colors.ink3 }]}>{entry.time}</Text> : null}
               </View>
-              {entry.extras ? (
-                <Text style={[styles.extras, { color: colors.ink2 }]}>{entry.extras}</Text>
+              {entry.detail ? (
+                <Text style={[styles.extras, { color: colors.ink2 }]}>{entry.detail}</Text>
               ) : null}
             </View>
           </View>
@@ -78,7 +81,6 @@ const styles = StyleSheet.create({
     gap: spacing.s2,
   },
   name: {
-    fontFamily: fonts.mono,
     fontSize: typeScale.bodySm,
     fontWeight: "600",
   },

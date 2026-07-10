@@ -8,17 +8,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { EventStateChip } from "../../components/ds/event-state-chip";
 import { EventTimeline } from "../../components/ds/event-timeline";
-import type { InboxEvent, ItemDetail } from "../../lib/api";
+import type { ItemDetail } from "../../lib/api";
 import { getApi } from "../../lib/brain";
+import { humanizeTrail } from "../../lib/humanize-events";
 import { useTheme } from "../../theme";
 import { fonts, radii, spacing, typeScale } from "../../theme/tokens";
-
-function eventExtras(event: InboxEvent): string {
-  const extras = Object.entries(event)
-    .filter(([key]) => key !== "ts" && key !== "event")
-    .map(([key, value]) => `${key}: ${String(value)}`);
-  return extras.join(" · ");
-}
 
 export default function ItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,13 +61,7 @@ export default function ItemDetailScreen() {
       <View
         style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}
       >
-        <EventTimeline
-          events={detail.events.map((event) => ({
-            event: event.event,
-            ts: event.ts,
-            extras: eventExtras(event) || undefined,
-          }))}
-        />
+        <EventTimeline events={humanizeTrail(detail.events)} />
       </View>
       {artifact ? (
         <Pressable

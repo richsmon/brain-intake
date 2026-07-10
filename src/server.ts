@@ -10,6 +10,9 @@ import { answerQuestion, listOpenQuestions, type ExecFn } from './questions.js';
 
 export interface ServerConfig {
   brainRoot: string;
+  /** IN-5 vault — raw captures live here, outside git. Defaults to brainRoot
+   * (tests); production always passes the real vault. */
+  vaultRoot?: string;
   /** Multipart file-size cap in bytes. Default 25 MB. */
   maxUploadBytes?: number;
   /** Shell command printing a transcript of `{input}` to stdout (BI-06).
@@ -75,7 +78,7 @@ function lastClassifiedTitle(events: InboxEvent[]): string | undefined {
 }
 
 export function buildServer(config: ServerConfig): FastifyInstance {
-  const inboxDir = join(config.brainRoot, 'inbox');
+  const inboxDir = join(config.vaultRoot ?? config.brainRoot, 'inbox');
   const app = Fastify({ logger: process.env.LOG_REQUESTS === '1' });
   app.register(multipart, {
     limits: { fileSize: config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES },

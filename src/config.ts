@@ -1,8 +1,11 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export interface AppConfig {
   brainRoot: string;
+  /** IN-5: raw captures live here, OUTSIDE the git repo. */
+  vaultRoot: string;
   port: number;
   bind: string;
   whisperCmd?: string;
@@ -11,9 +14,9 @@ export interface AppConfig {
 export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const brainRoot = env.BRAIN_ROOT;
   if (!brainRoot) throw new Error('BRAIN_ROOT is required (path to the brain repo checkout)');
-  if (!existsSync(join(brainRoot, 'inbox'))) {
-    throw new Error(`BRAIN_ROOT has no inbox/ dir: ${brainRoot}`);
-  }
+  if (!existsSync(brainRoot)) throw new Error(`BRAIN_ROOT does not exist: ${brainRoot}`);
+  const vaultRoot = env.VAULT_ROOT ?? join(homedir(), 'BrainVault');
+  mkdirSync(join(vaultRoot, 'inbox'), { recursive: true });
 
   let port = 8787;
   if (env.PORT !== undefined) {
@@ -23,6 +26,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
 
   return {
     brainRoot,
+    vaultRoot,
     port,
     bind: env.BIND ?? '127.0.0.1',
     ...(env.WHISPER_CMD !== undefined && env.WHISPER_CMD !== ''

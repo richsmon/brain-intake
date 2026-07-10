@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -293,5 +293,21 @@ describe('intake v1.1: kind hint, cloud approvals, digest', () => {
     expect(body.counts.categorized).toBe(1);
     expect(body.highlights[0]).toMatchObject({ id, state: 'categorized', kind: 'task' });
     expect(body).toHaveProperty('loopDisabled');
+  });
+});
+
+describe('IN-5 vault separation', () => {
+  test('captures land in the vault inbox, not the brain repo', async () => {
+    const brain = tmpBrain();
+    const vault = mkdtempSync(join(tmpdir(), 'vault-'));
+    mkdirSync(join(vault, 'inbox'));
+    const app = buildServer({ brainRoot: brain, vaultRoot: vault });
+    const { id } = (
+      await app.inject({ method: 'POST', url: '/items', payload: { source: 'text', text: 'súkromná vec' } })
+    ).json();
+    expect(existsSync(join(vault, 'inbox', id, 'payload.md'))).toBe(true);
+    expect(existsSync(join(brain, 'inbox', id))).toBe(false);
+    // reads work off the vault too
+    expect((await app.inject({ method: 'GET', url: `/items/${id}` })).statusCode).toBe(200);
   });
 });

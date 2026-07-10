@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -15,15 +15,21 @@ describe('loadConfig', () => {
     expect(() => loadConfig({})).toThrow(/BRAIN_ROOT/);
   });
 
-  test('BRAIN_ROOT must contain an inbox/ dir', () => {
-    const noInbox = mkdtempSync(join(tmpdir(), 'brain-'));
-    expect(() => loadConfig({ BRAIN_ROOT: noInbox })).toThrow(/inbox/);
+  test('BRAIN_ROOT must exist; the vault inbox is auto-created (IN-5)', () => {
+    expect(() => loadConfig({ BRAIN_ROOT: '/nope/definitely-missing' })).toThrow(/exist/);
+    const root = tmpBrain();
+    const vault = mkdtempSync(join(tmpdir(), 'vault-'));
+    const cfg = loadConfig({ BRAIN_ROOT: root, VAULT_ROOT: vault });
+    expect(cfg.vaultRoot).toBe(vault);
+    expect(existsSync(join(vault, 'inbox'))).toBe(true);
   });
 
   test('defaults: port 8787, bind 127.0.0.1', () => {
     const root = tmpBrain();
-    expect(loadConfig({ BRAIN_ROOT: root })).toEqual({
+    const vault = mkdtempSync(join(tmpdir(), 'vault-'));
+    expect(loadConfig({ BRAIN_ROOT: root, VAULT_ROOT: vault })).toEqual({
       brainRoot: root,
+      vaultRoot: vault,
       port: 8787,
       bind: '127.0.0.1',
     });
@@ -31,8 +37,10 @@ describe('loadConfig', () => {
 
   test('PORT and BIND override the defaults', () => {
     const root = tmpBrain();
-    expect(loadConfig({ BRAIN_ROOT: root, PORT: '9000', BIND: '100.64.0.7' })).toEqual({
+    const vault = mkdtempSync(join(tmpdir(), 'vault-'));
+    expect(loadConfig({ BRAIN_ROOT: root, VAULT_ROOT: vault, PORT: '9000', BIND: '100.64.0.7' })).toEqual({
       brainRoot: root,
+      vaultRoot: vault,
       port: 9000,
       bind: '100.64.0.7',
     });

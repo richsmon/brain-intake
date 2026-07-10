@@ -41,15 +41,15 @@ describe("ItemDetailScreen", () => {
       </ThemeProvider>,
     );
     expect(await screen.findByText("2026-07-08-6683abec")).toBeOnTheScreen();
-    expect(screen.getByText("captured")).toBeOnTheScreen();
-    expect(screen.getByText("queued")).toBeOnTheScreen();
+    // The trail reads in plain words now (humanize-events); protocol names stay in the log.
+    expect(screen.getByText("Text note captured")).toBeOnTheScreen();
     // The item-state chip shows the became kind; the raw event name stays in the timeline.
     expect(screen.getByText("note")).toBeOnTheScreen();
-    expect(screen.getAllByText("became").length).toBeGreaterThanOrEqual(1);
     // Voice items surface the transcript; audio stays the source of truth.
     expect(screen.getByText(/the spoken thought, word for word/)).toBeOnTheScreen();
     expect(screen.getByText(/audio is source of truth/i)).toBeOnTheScreen();
-    expect(screen.getByText("source: text · sha: 6683abec")).toBeOnTheScreen();
+    expect(screen.getByText(/Became a note/)).toBeOnTheScreen();
+    expect(screen.queryByText(/sha/)).toBeNull();
 
     await fireEvent.press(screen.getByText("Artifact (tap to copy)"));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(
