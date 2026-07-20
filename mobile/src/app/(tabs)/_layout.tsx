@@ -52,6 +52,9 @@ function useBadges() {
   }, []);
 
   useEffect(() => {
+    // TODO(v1.1 debt): refresh() is async — setState lands post-await, but the
+    // react-compiler rule flags the call site; restructure at the next Act pass.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void refresh();

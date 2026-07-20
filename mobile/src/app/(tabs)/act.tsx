@@ -62,7 +62,7 @@ function CloudApprovalCard({ pending, onDone }: { pending: CloudApproval; onDone
       </View>
       <Text style={[styles.cardTitle, { color: colors.ink1 }]}>{pending.title}</Text>
       <Text style={[styles.cardBody, { color: colors.ink2 }]}>
-        I couldn't place this locally. Send it to Claude for a second opinion?
+        I couldn&apos;t place this locally. Send it to Claude for a second opinion?
       </Text>
       <View style={styles.actions}>
         <Pressable
