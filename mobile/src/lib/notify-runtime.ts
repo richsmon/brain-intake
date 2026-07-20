@@ -19,12 +19,13 @@ async function loadState(): Promise<NotifyState> {
     const raw = await AsyncStorage.getItem(STATE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     if (parsed && typeof parsed === "object" && Array.isArray((parsed as NotifyState).notifiedActIds)) {
-      return parsed as NotifyState;
+      const state = parsed as NotifyState;
+      return { ...state, loopReportId: state.loopReportId ?? null };
     }
   } catch {
     // fall through to fresh state
   }
-  return { notifiedActIds: [], digestDate: null };
+  return { notifiedActIds: [], digestDate: null, loopReportId: null };
 }
 
 /** One poll → decide → fire. Shared by the background task and app foregrounds. */

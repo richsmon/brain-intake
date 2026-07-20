@@ -2,7 +2,7 @@
 // v1 delivery is local notifications fired from a background fetch; when APNs
 // lands (server-side push), the same decisions move server-side unchanged.
 
-import type { Digest } from "./api";
+import type { Digest, LoopRunSummary } from "./api";
 
 export interface PendingAct {
   id: string;
@@ -14,6 +14,8 @@ export interface NotifyState {
   notifiedActIds: string[];
   /** Local date (YYYY-MM-DD) of the last digest notification. */
   digestDate: string | null;
+  /** Last loop report already seen (IN-6) — null adopts silently. */
+  loopReportId: string | null;
 }
 
 export interface NotificationContent {
@@ -29,6 +31,21 @@ function localDate(now: Date): string {
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function loopBody(loop: LoopRunSummary): string {
+  const parts: string[] = [];
+  if (loop.prsOpened > 0) {
+    parts.push(loop.prsOpened === 1 ? "1 PR awaits review" : `${loop.prsOpened} PRs await review`);
+  }
+  if (loop.questions !== null && loop.questions > 0) {
+    parts.push(loop.questions === 1 ? "1 question needs you" : `${loop.questions} questions need you`);
+  }
+  if (loop.errors > 0) {
+    parts.push(loop.errors === 1 ? "1 error" : `${loop.errors} errors`);
+  }
+  if (parts.length === 0) return "Quiet run — nothing needs you.";
+  return parts.join(" · ") + ".";
 }
 
 function digestBody(digest: Digest): string {
@@ -77,12 +94,21 @@ export function decideNotifications(
     }
   }
 
+  let loopReportId = prev.loopReportId;
+  const loop = snapshot.digest?.loop ?? null;
+  if (loop !== null && loop.reportId !== loopReportId) {
+    if (loopReportId !== null) {
+      notifications.push({ title: "Brain loop ran", body: loopBody(loop) });
+    }
+    loopReportId = loop.reportId; // first sight adopts silently — no historic spam
+  }
+
   const rememberedIds = [...prev.notifiedActIds, ...fresh.map((act) => act.id)].slice(
     -MAX_REMEMBERED,
   );
 
   return {
     notifications,
-    next: { notifiedActIds: rememberedIds, digestDate },
+    next: { notifiedActIds: rememberedIds, digestDate, loopReportId },
   };
 }

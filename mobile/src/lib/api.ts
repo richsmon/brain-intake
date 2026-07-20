@@ -61,12 +61,27 @@ export interface CloudApproval {
   reason: string;
 }
 
+/** Parsed summary of the latest brain-loop run (server: src/loop-report.ts). */
+export interface LoopRunSummary {
+  reportId: string;
+  mode: string | null;
+  openItems: number | null;
+  openPrsBefore: number | null;
+  selected: number | null;
+  questions: number | null;
+  claimed: number | null;
+  skipped: number | null;
+  prsOpened: number;
+  errors: number;
+}
+
 export interface Digest {
   date: string;
   counts: { captured: number; became: number; categorized: number; needsHuman: number; cloudApprovals: number };
   highlights: { id: string; state: string; title?: string; kind?: string }[];
   loopDisabled: boolean;
   lastReport: string | null;
+  loop: LoopRunSummary | null;
 }
 
 export interface Health {
