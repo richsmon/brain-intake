@@ -7,6 +7,7 @@ import { AUDIO_EXTS, transcribeItem } from './transcribe.js';
 import { makeApprovals, type Approvals } from './approvals.js';
 import type { IntakeTrigger } from './intake-trigger.js';
 import { answerQuestion, listOpenQuestions, type ExecFn } from './questions.js';
+import { parseLoopReport, type LoopRunSummary } from './loop-report.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -309,7 +310,15 @@ export function buildServer(config: ServerConfig): FastifyInstance {
     const lastReport = existsSync(reportsDir)
       ? (readdirSync(reportsDir).filter((f) => /^\d{4}-\d{2}-\d{2}.*\.md$/.test(f)).sort().pop() ?? null)
       : null;
-    return { date: today, counts, highlights: highlights.slice(-8).reverse(), loopDisabled, lastReport };
+    let loop: LoopRunSummary | null = null;
+    if (lastReport !== null) {
+      try {
+        loop = parseLoopReport(lastReport, readFileSync(join(reportsDir, lastReport), 'utf8'));
+      } catch {
+        loop = null;
+      }
+    }
+    return { date: today, counts, highlights: highlights.slice(-8).reverse(), loopDisabled, lastReport, loop };
   });
 
   app.get('/fleet', async () => {
