@@ -117,6 +117,35 @@ describe('sessions config (BI-C1)', () => {
   });
 });
 
+describe('session picker config (BI-C2)', () => {
+  test('defaults: Fable/Opus/Sonnet/Haiku models + five effort levels', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({ BRAIN_ROOT: root });
+    expect(cfg.sessionModels.map((m) => m.label)).toEqual(['Fable', 'Opus', 'Sonnet', 'Haiku']);
+    expect(cfg.sessionModels[0]).toEqual({ id: 'claude-fable-5', label: 'Fable' });
+    expect(cfg.sessionEfforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  test('SESSION_MODELS and SESSION_EFFORTS override the defaults', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({
+      BRAIN_ROOT: root,
+      SESSION_MODELS: 'claude-sonnet-5=Sonnet, claude-haiku-4-5=Haiku',
+      SESSION_EFFORTS: 'low, high',
+    });
+    expect(cfg.sessionModels).toEqual([
+      { id: 'claude-sonnet-5', label: 'Sonnet' },
+      { id: 'claude-haiku-4-5', label: 'Haiku' },
+    ]);
+    expect(cfg.sessionEfforts).toEqual(['low', 'high']);
+  });
+
+  test('malformed SESSION_MODELS → error', () => {
+    const root = tmpBrain();
+    expect(() => loadConfig({ BRAIN_ROOT: root, SESSION_MODELS: 'just-an-id' })).toThrow(/SESSION_MODELS/);
+  });
+});
+
 test('WHISPER_CMD flows through; absent or empty leaves it unset', () => {
   const root = tmpBrain();
   expect(loadConfig({ BRAIN_ROOT: root, WHISPER_CMD: 'whisper-ctranslate2 --model base {input}' }).whisperCmd).toBe(

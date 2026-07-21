@@ -3,7 +3,8 @@
 // route requires `Authorization: Bearer <sessionsToken>`. Registered inside an
 // encapsulated plugin so the guard hook applies only to /sessions/*.
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type { SessionMeta, SessionStore } from './store.js';
+import type { SessionModel } from '../config.js';
+import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 
 export interface SessionRunnerLike {
   run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: 'gated' | 'acceptEdits' }): Promise<void>;
@@ -18,6 +19,9 @@ export interface SessionRoutesConfig {
   runner: SessionRunnerLike;
   repoAllowlist: Record<string, string>;
   token: string;
+  /** BI-C2: picker values for `GET /sessions/meta` — server config is the single source. */
+  models: SessionModel[];
+  efforts: string[];
 }
 
 interface PostSessionBody {
@@ -31,7 +35,7 @@ interface PostSessionBody {
 const MODES = new Set(['gated', 'acceptEdits']);
 
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
-  const { store, runner, repoAllowlist, token } = config;
+  const { store, runner, repoAllowlist, token, models, efforts } = config;
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -78,6 +82,31 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
     });
 
     scoped.get('/sessions', async () => store.listSessions());
+
+    // BI-C2: single source for the app's pickers — repos, models, efforts from config.
+    scoped.get('/sessions/meta', async () => ({
+      repos: Object.keys(repoAllowlist),
+      models,
+      efforts,
+    }));
+
+    // BI-C2: non-streaming snapshot for mobile polling. Same offset contract as
+    // the SSE route; `nextOffset` is what the client passes on the next poll.
+    scoped.get<{ Params: { id: string }; Querystring: { offset?: string } }>(
+      '/sessions/:id/events.json',
+      async (req, reply) => {
+        const { id } = req.params;
+        if (!store.has(id)) return reply.code(404).send({ error: 'unknown session' });
+        const offset = Number(req.query.offset ?? '0');
+        const fromOffset = Number.isInteger(offset) && offset > 0 ? offset : 0;
+        const all = store.readEvents(id);
+        return {
+          events: all.filter((e) => e.index >= fromOffset),
+          nextOffset: all.length,
+          state: sessionState(all),
+        };
+      },
+    );
 
     scoped.get<{ Params: { id: string }; Querystring: { offset?: string } }>(
       '/sessions/:id/events',

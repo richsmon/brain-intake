@@ -23,6 +23,8 @@ const app = buildServer({
           bashAllowlist: config.bashAllowlist,
           approvalTimeoutMin: config.approvalTimeoutMin,
           token: config.sessionsToken,
+          models: config.sessionModels,
+          efforts: config.sessionEfforts,
           sdk: createRealSdk(),
         },
       }
