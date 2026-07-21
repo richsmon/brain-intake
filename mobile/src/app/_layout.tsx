@@ -25,6 +25,7 @@ function ThemedApp() {
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="item/[id]" options={{ title: "Item" }} />
+        <Stack.Screen name="session/[id]" options={{ title: "Session" }} />
         <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
       </Stack>
     </>
