@@ -61,12 +61,17 @@ function humanize(e: InboxEvent, index: number, all: InboxEvent[]): HumanEvent |
       return { ...base, title: "Privacy check passed", detail: "Everything stayed on your machine" };
     }
     case "classified": {
-      const who = e.classifier === "cloud" ? "Claude" : "your local model";
+      const model = str(e.model);
+      const cloud = e.classifier === "cloud";
+      const who = cloud ? "Claude" : (model ?? "your local model");
       const labels = Array.isArray(e.labels) && e.labels.length > 0 ? ` · ${(e.labels as string[]).join(", ")}` : "";
+      // "claude-default" is a placeholder, not provenance — only real ids earn a spot.
+      const cloudModel = cloud && model && model !== "claude-default" ? ` · ${model}` : "";
+      const took = typeof e.duration_ms === "number" ? ` · ${e.duration_ms < 1000 ? "<1 s" : `${Math.round(e.duration_ms / 1000)} s`}` : "";
       return {
         ...base,
         title: `Understood by ${who}`,
-        detail: `${str(e.type) ?? "?"} in ${str(e.workspace) ?? "?"}${labels}`,
+        detail: `${str(e.type) ?? "?"} in ${str(e.workspace) ?? "?"}${labels}${cloudModel}${took}`,
       };
     }
     case "routed":

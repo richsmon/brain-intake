@@ -70,4 +70,45 @@ describe("humanizeTrail", () => {
     const rows = humanizeTrail(trail({ event: "mystery-event" }));
     expect(rows[0]!.title).toBe("mystery-event");
   });
+
+  describe("classified provenance", () => {
+    it("names the local model that judged and how fast", () => {
+      const rows = humanizeTrail(
+        trail({ event: "classified", type: "task", workspace: "life", labels: ["nakupy"], classifier: "local", model: "qwen2.5:14b", duration_ms: 17400 }),
+      );
+      expect(rows[0]!.title).toBe("Understood by qwen2.5:14b");
+      expect(rows[0]!.detail).toBe("task in life · nakupy · 17 s");
+    });
+
+    it("keeps Claude as the cloud name and hides the claude-default placeholder", () => {
+      const rows = humanizeTrail(
+        trail({ event: "classified", type: "idea", workspace: "gotam", labels: [], classifier: "cloud", model: "claude-default", duration_ms: 8600 }),
+      );
+      expect(rows[0]!.title).toBe("Understood by Claude");
+      expect(rows[0]!.detail).toBe("idea in gotam · 9 s");
+    });
+
+    it("shows a real cloud model id in the detail", () => {
+      const rows = humanizeTrail(
+        trail({ event: "classified", type: "idea", workspace: "gotam", labels: [], classifier: "cloud", model: "claude-sonnet-4-5", duration_ms: 3200 }),
+      );
+      expect(rows[0]!.title).toBe("Understood by Claude");
+      expect(rows[0]!.detail).toBe("idea in gotam · claude-sonnet-4-5 · 3 s");
+    });
+
+    it("shows sub-second classifies as <1 s", () => {
+      const rows = humanizeTrail(
+        trail({ event: "classified", type: "task", workspace: "life", labels: [], classifier: "local", model: "qwen2.5:14b", duration_ms: 640 }),
+      );
+      expect(rows[0]!.detail).toBe("task in life · <1 s");
+    });
+
+    it("renders old events without the fields exactly as before", () => {
+      const rows = humanizeTrail(
+        trail({ event: "classified", type: "task", workspace: "life", labels: ["nakupy"], classifier: "local", confidence: 0.95 }),
+      );
+      expect(rows[0]!.title).toBe("Understood by your local model");
+      expect(rows[0]!.detail).toBe("task in life · nakupy");
+    });
+  });
 });
