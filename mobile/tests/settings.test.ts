@@ -31,4 +31,11 @@ describe("makeSettings", () => {
     await settings.setBaseUrl("  http://h:1 \n");
     expect(await settings.getBaseUrl()).toBe("http://h:1");
   });
+
+  it("sessions token defaults to empty (not configured) and round-trips trimmed", async () => {
+    const settings = makeSettings(memoryStore());
+    expect(await settings.getSessionsToken()).toBe("");
+    await settings.setSessionsToken("  tok-123 \n");
+    expect(await settings.getSessionsToken()).toBe("tok-123");
+  });
 });
