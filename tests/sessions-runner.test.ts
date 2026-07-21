@@ -283,6 +283,57 @@ describe('runner — mode flip', () => {
   });
 });
 
+describe('runner — real-SDK shape: query stays open after the result (BI-C2)', () => {
+  test('the runner closes the input after an idle result so the session reaches done', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const { sdk } = fakeSdk(async ({ emit, readMessage }) => {
+      await readMessage(); // initial prompt
+      emit(text('hello'));
+      emit(ok());
+      // Real streaming-input SDK: keeps waiting for more user input and only
+      // ends when the prompt stream closes. Without the runner closing it,
+      // this loop never ends and the session never leaves `running`.
+      while ((await readMessage()) !== null) {
+        /* drain */
+      }
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    await runner.run(id, META);
+
+    expect(store.listSessions()[0]!.state).toBe('done');
+    expect(store.readEvents(id).some((e) => e.event === 'result' && e.outcome === 'success')).toBe(true);
+    // The closed session no longer accepts follow-up messages.
+    expect(runner.sendMessage(id, 'too late')).toBe(false);
+  });
+
+  test('a follow-up queued during the turn keeps the session alive for another turn', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const { sdk } = fakeSdk(async ({ emit, readMessage }) => {
+      await readMessage(); // initial prompt
+      emit(text('first turn'));
+      emit(ok());
+      const follow = await readMessage(); // queued before the result landed
+      emit(text(`second turn: ${follow}`));
+      emit(ok());
+      while ((await readMessage()) !== null) {
+        /* drain */
+      }
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    const runPromise = runner.run(id, META);
+    // Queue the follow-up before the first turn's result is processed —
+    // run() registers the controller synchronously.
+    expect(runner.sendMessage(id, 'and another thing')).toBe(true);
+    await runPromise;
+
+    const events = store.readEvents(id);
+    expect(events.some((e) => e.event === 'chat_chunk' && e.text === 'second turn: and another thing')).toBe(true);
+    expect(store.listSessions()[0]!.state).toBe('done');
+  });
+});
+
 describe('runner — SDK throws', () => {
   test('an error inside the query is captured as result:error + status error', async () => {
     const store = tmpStore();
