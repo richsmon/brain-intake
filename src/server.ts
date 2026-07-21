@@ -12,6 +12,9 @@ import type { SessionModel } from './config.js';
 import { SessionStore } from './sessions/store.js';
 import { SessionRunner, type SessionSdk } from './sessions/runner.js';
 import { registerSessionRoutes } from './sessions/routes.js';
+import { PushTokenStore } from './push/tokens.js';
+import { PushSender } from './push/sender.js';
+import { wireSessionPush } from './push/wire.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -41,6 +44,8 @@ export interface ServerConfig {
     efforts: string[];
     /** Test seam: inject a fake Agent SDK. Production wires the real query(). */
     sdk: SessionSdk;
+    /** BI-C3: test seam for the Expo push API. Production uses global fetch. */
+    pushFetch?: typeof fetch;
   };
 }
 
@@ -113,6 +118,16 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       bashAllowlist: config.sessions.bashAllowlist,
       approvalTimeoutMs: config.sessions.approvalTimeoutMin * 60_000,
     });
+    // BI-C3: session pushes. Always wired alongside the sessions API — with no
+    // registered device tokens the sender is a silent no-op, so the server
+    // runs unchanged when push was never configured.
+    const pushTokens = new PushTokenStore(config.sessions.sessionsDir);
+    const pushSender = new PushSender({
+      tokens: pushTokens,
+      onError: (err) => app.log.error({ err }, 'session push failed'),
+      ...(config.sessions.pushFetch !== undefined ? { fetchImpl: config.sessions.pushFetch } : {}),
+    });
+    wireSessionPush({ store, sender: pushSender });
     registerSessionRoutes(app, {
       store,
       runner,
@@ -120,6 +135,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       token: config.sessions.token,
       models: config.sessions.models,
       efforts: config.sessions.efforts,
+      pushTokens,
     });
   }
 

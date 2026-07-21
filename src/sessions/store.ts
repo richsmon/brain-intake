@@ -13,6 +13,9 @@ export type StoredEvent = SessionEvent & { index: number };
 
 export type SessionState = 'created' | 'running' | 'waiting-approval' | 'paused' | 'done' | 'error';
 
+/** BI-C3: firehose channel for cross-session subscribers (push bridge). */
+const ALL_EVENTS = Symbol('all-events');
+
 export interface SessionMeta {
   repo: string;
   repoPath: string;
@@ -62,6 +65,7 @@ export class SessionStore {
     this.counts.set(id, index + 1);
     const stored: StoredEvent = { ...stamped, index };
     this.emitter.emit(id, stored);
+    this.emitter.emit(ALL_EVENTS, id, stored);
     return index;
   }
 
@@ -112,6 +116,12 @@ export class SessionStore {
   subscribe(id: string, listener: (event: StoredEvent) => void): () => void {
     this.emitter.on(id, listener);
     return () => this.emitter.off(id, listener);
+  }
+
+  /** BI-C3: every appended event across all sessions — feeds the push bridge. */
+  subscribeAll(listener: (id: string, event: StoredEvent) => void): () => void {
+    this.emitter.on(ALL_EVENTS, listener);
+    return () => this.emitter.off(ALL_EVENTS, listener);
   }
 }
 
