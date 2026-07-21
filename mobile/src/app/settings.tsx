@@ -18,6 +18,7 @@ export default function SettingsScreen() {
   const { colors, preference, setPreference } = useTheme();
   const [url, setUrl] = useState("");
   const [health, setHealth] = useState("checking…");
+  const [sessionsToken, setSessionsToken] = useState("");
 
   const checkHealth = useCallback(async () => {
     try {
@@ -31,6 +32,7 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     void settings.getBaseUrl().then(setUrl);
+    void settings.getSessionsToken().then(setSessionsToken);
     // On-mount server probe; every setState inside happens after an await,
     // so no synchronous cascading render is possible.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -40,6 +42,7 @@ export default function SettingsScreen() {
   async function save() {
     setHealth("checking…");
     await settings.setBaseUrl(url);
+    await settings.setSessionsToken(sessionsToken);
     await checkHealth();
   }
 
@@ -56,6 +59,20 @@ export default function SettingsScreen() {
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
+      />
+      <Text style={[styles.label, styles.section, { color: colors.ink3 }]}>Sessions token</Text>
+      <TextInput
+        style={[
+          styles.input,
+          { borderColor: colors.line, backgroundColor: colors.bgSurface2, color: colors.ink1 },
+        ]}
+        value={sessionsToken}
+        onChangeText={setSessionsToken}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+        placeholder="unlocks the Coding tab"
+        placeholderTextColor={colors.ink3}
       />
       <Pressable
         accessibilityRole="button"

@@ -8,6 +8,7 @@ import { makeApprovals, type Approvals } from './approvals.js';
 import type { IntakeTrigger } from './intake-trigger.js';
 import { answerQuestion, listOpenQuestions, type ExecFn } from './questions.js';
 import { parseLoopReport, type LoopRunSummary } from './loop-report.js';
+import type { SessionModel } from './config.js';
 import { SessionStore } from './sessions/store.js';
 import { SessionRunner, type SessionSdk } from './sessions/runner.js';
 import { registerSessionRoutes } from './sessions/routes.js';
@@ -35,6 +36,9 @@ export interface ServerConfig {
     bashAllowlist: string[];
     approvalTimeoutMin: number;
     token: string;
+    /** BI-C2: picker values served by `GET /sessions/meta`. */
+    models: SessionModel[];
+    efforts: string[];
     /** Test seam: inject a fake Agent SDK. Production wires the real query(). */
     sdk: SessionSdk;
   };
@@ -114,6 +118,8 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       runner,
       repoAllowlist: config.sessions.repoAllowlist,
       token: config.sessions.token,
+      models: config.sessions.models,
+      efforts: config.sessions.efforts,
     });
   }
 

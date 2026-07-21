@@ -1,5 +1,6 @@
-// The three-mode navigation: Read · Capture (center, home) · Act.
-// Read carries the amber badge (new `became`), Act the red one (pending).
+// The four-mode navigation: Read · Capture (center-ish, home) · Act · Coding.
+// Read carries the amber badge (new `became`), Act and Coding the red ones
+// (pending approvals / sessions waiting on the founder).
 
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -7,12 +8,13 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useTheme } from "../../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
 
-export type ModeName = "read" | "capture" | "act";
+export type ModeName = "read" | "capture" | "act" | "coding";
 
-const MODES: { name: ModeName; label: string; icon: "inbox" | "plus" | "zap" }[] = [
+const MODES: { name: ModeName; label: string; icon: "inbox" | "plus" | "zap" | "code" }[] = [
   { name: "read", label: "Read", icon: "inbox" },
   { name: "capture", label: "Capture", icon: "plus" },
   { name: "act", label: "Act", icon: "zap" },
+  { name: "coding", label: "Coding", icon: "code" },
 ];
 
 function Badge({ count, color, textColor }: { count: number; color: string; textColor: string }) {
@@ -29,11 +31,13 @@ export function ModeBar({
   onChange,
   readBadge = 0,
   actBadge = 0,
+  codingBadge = 0,
 }: {
   active: ModeName;
   onChange: (mode: ModeName) => void;
   readBadge?: number;
   actBadge?: number;
+  codingBadge?: number;
 }) {
   const { colors } = useTheme();
   return (
@@ -70,6 +74,9 @@ export function ModeBar({
               )}
               {mode.name === "act" && (
                 <Badge count={actBadge} color={colors.stateNeedsHuman} textColor="#FFFFFF" />
+              )}
+              {mode.name === "coding" && (
+                <Badge count={codingBadge} color={colors.stateNeedsHuman} textColor="#FFFFFF" />
               )}
             </View>
             <Text style={[styles.label, { color: tint }]}>{mode.label}</Text>

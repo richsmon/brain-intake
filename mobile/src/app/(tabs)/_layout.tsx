@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ModeBar, type ModeName } from "../../components/ds/mode-bar";
 import type { ItemSummary } from "../../lib/api";
-import { getApi } from "../../lib/brain";
+import { getApi, getSessionsApi } from "../../lib/brain";
 import { loadSeenIds, markBecameSeen, unseenBecameCount } from "../../lib/read-badge";
 import { useTheme } from "../../theme";
 
@@ -13,12 +13,14 @@ const ROUTE_TO_MODE: Record<string, ModeName> = {
   items: "read",
   index: "capture",
   act: "act",
+  coding: "coding",
 };
 
 const MODE_TO_ROUTE: Record<ModeName, string> = {
   read: "items",
   capture: "index",
   act: "act",
+  coding: "coding",
 };
 
 // Structural subset of @react-navigation/bottom-tabs' BottomTabBarProps —
@@ -28,13 +30,22 @@ interface TabBarProps {
   navigation: { navigate: (name: string) => void };
 }
 
-/** Read = new-`became` since last look; Act = live pending count. Offline → 0. */
+/** Read = new-`became` since last look; Act = live pending count;
+ *  Coding = sessions blocked on an approval. Offline / no token → 0. */
 function useBadges() {
   const [count, setCount] = useState(0);
   const [actCount, setActCount] = useState(0);
+  const [codingCount, setCodingCount] = useState(0);
   const itemsRef = useRef<ItemSummary[]>([]);
 
   const refresh = useCallback(async () => {
+    try {
+      const sessionsApi = await getSessionsApi();
+      const sessions = sessionsApi ? await sessionsApi.list().catch(() => []) : [];
+      setCodingCount(sessions.filter((s) => s.state === "waiting-approval").length);
+    } catch {
+      // No token / offline — no badge is the honest answer.
+    }
     try {
       const api = await getApi();
       const items = await api.listItems();
@@ -67,13 +78,13 @@ function useBadges() {
     void markBecameSeen(itemsRef.current);
   }, []);
 
-  return { count, actCount, markRead };
+  return { count, actCount, codingCount, markRead };
 }
 
 export default function TabsLayout() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { count: readBadge, actCount: actBadge, markRead } = useBadges();
+  const { count: readBadge, actCount: actBadge, codingCount: codingBadge, markRead } = useBadges();
 
   const renderTabBar = ({ state, navigation }: TabBarProps) => {
     const activeRoute = state.routes[state.index]?.name ?? "index";
@@ -82,6 +93,7 @@ export default function TabsLayout() {
         active={ROUTE_TO_MODE[activeRoute] ?? "capture"}
         readBadge={readBadge}
         actBadge={actBadge}
+        codingBadge={codingBadge}
         onChange={(mode) => {
           if (mode === "read") markRead();
           navigation.navigate(MODE_TO_ROUTE[mode]);
@@ -105,6 +117,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="items" options={{ title: "Read" }} />
       <Tabs.Screen name="index" options={{ title: "Capture" }} />
       <Tabs.Screen name="act" options={{ title: "Act" }} />
+      <Tabs.Screen name="coding" options={{ title: "Coding" }} />
     </Tabs>
   );
 }

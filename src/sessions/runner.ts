@@ -116,6 +116,14 @@ class RunController {
     else this.queue.push(msg);
   }
 
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  hasQueuedInput(): boolean {
+    return this.queue.length > 0;
+  }
+
   close(): void {
     this.closed = true;
     let waiter = this.waiters.shift();
@@ -188,6 +196,14 @@ export class SessionRunner {
             ? 'error'
             : 'success';
           if (typeof message.result === 'string') summary = message.result;
+          // BI-C2: the real SDK (streaming input) keeps the query open for more
+          // input after a turn's result. With nothing queued and no gate pending
+          // the session is finished — close the input so the query ends and the
+          // trail reaches its terminal state. (The C1 fake SDKs ended their own
+          // iterators, which masked this.)
+          if (!controller.hasQueuedInput() && controller.pending.size === 0) {
+            controller.close();
+          }
         }
       }
 
@@ -283,7 +299,7 @@ export class SessionRunner {
 
   sendMessage(id: string, text: string): boolean {
     const controller = this.active.get(id);
-    if (!controller) return false;
+    if (!controller || controller.isClosed) return false;
     this.cfg.store.appendEvent(id, { event: 'user_message', text });
     controller.pushMessage(text);
     return true;

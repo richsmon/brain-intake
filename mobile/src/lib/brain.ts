@@ -8,6 +8,7 @@ import { ApiError, MIME_BY_EXT, makeApi, type Api, type FileSource, type TextSou
 import { checkCapturedFile, type FileCheck } from "./file-checks";
 import { makeQueue, type FlushReport, type Queue, type QueueEntry } from "./queue";
 import { expoQueueFs } from "./queue-fs.expo";
+import { makeSessionsApi, type SessionsApi } from "./sessions";
 import { makeSettings } from "./settings";
 
 export const settings = makeSettings();
@@ -46,6 +47,14 @@ function getQueue(): Queue {
 
 export async function getApi(): Promise<Api> {
   return makeApi(await settings.getBaseUrl());
+}
+
+/** BI-C2: coding-sessions client. Null until a sessions token is stored —
+ * mirrors the server, which mounts /sessions/* only when its token is set. */
+export async function getSessionsApi(): Promise<SessionsApi | null> {
+  const token = await settings.getSessionsToken();
+  if (!token) return null;
+  return makeSessionsApi(await settings.getBaseUrl(), token);
 }
 
 /** Background-task shape: capture returns as soon as the entry is queued

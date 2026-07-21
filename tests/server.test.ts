@@ -172,6 +172,8 @@ describe('sessions wiring (BI-C1)', () => {
         bashAllowlist: ['git status'],
         approvalTimeoutMin: 30,
         token: 'tok',
+        models: [{ id: 'claude-sonnet-5', label: 'Sonnet' }],
+        efforts: ['high'],
         sdk,
       },
     });

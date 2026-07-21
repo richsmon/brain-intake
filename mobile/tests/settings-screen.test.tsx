@@ -9,6 +9,8 @@ jest.mock("../src/lib/brain", () => ({
   settings: {
     getBaseUrl: jest.fn(async () => "http://100.96.207.63:8787"),
     setBaseUrl: jest.fn(async () => undefined),
+    getSessionsToken: jest.fn(async () => ""),
+    setSessionsToken: jest.fn(async () => undefined),
   },
   getApi: jest.fn(async () => ({
     health: async () => ({ ok: true, brainRoot: "/Users/richsmon/code/universal-brain" }),
@@ -57,6 +59,15 @@ describe("SettingsScreen", () => {
     await fireEvent.press(screen.getByText("Save"));
     await screen.findByText("ok — /Users/richsmon/code/universal-brain");
     expect(setBaseUrlMock).toHaveBeenCalledWith("http://other:8787");
+  });
+
+  it("saves the sessions token alongside the URL (BI-C2)", async () => {
+    await renderSettings();
+    const tokenInput = await screen.findByPlaceholderText("unlocks the Coding tab");
+    await fireEvent.changeText(tokenInput, "tok-abc");
+    await fireEvent.press(screen.getByText("Save"));
+    await screen.findByText("ok — /Users/richsmon/code/universal-brain");
+    expect(settings.setSessionsToken).toHaveBeenCalledWith("tok-abc");
   });
 
   it("shows unreachable when health fails", async () => {
