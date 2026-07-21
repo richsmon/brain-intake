@@ -8,6 +8,9 @@ import { makeApprovals, type Approvals } from './approvals.js';
 import type { IntakeTrigger } from './intake-trigger.js';
 import { answerQuestion, listOpenQuestions, type ExecFn } from './questions.js';
 import { parseLoopReport, type LoopRunSummary } from './loop-report.js';
+import { SessionStore } from './sessions/store.js';
+import { SessionRunner, type SessionSdk } from './sessions/runner.js';
+import { registerSessionRoutes } from './sessions/routes.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -25,6 +28,16 @@ export interface ServerConfig {
   questionsExec?: ExecFn;
   /** Test seam; defaults to gh-backed approvals in brainRoot. */
   approvals?: Approvals;
+  /** BI-C1 coding surface. Registered only when a bearer token is configured. */
+  sessions?: {
+    sessionsDir: string;
+    repoAllowlist: Record<string, string>;
+    bashAllowlist: string[];
+    approvalTimeoutMin: number;
+    token: string;
+    /** Test seam: inject a fake Agent SDK. Production wires the real query(). */
+    sdk: SessionSdk;
+  };
 }
 
 const JSON_SOURCES = new Set(['text', 'share-sheet']);
@@ -86,6 +99,23 @@ export function buildServer(config: ServerConfig): FastifyInstance {
   });
 
   app.get('/health', async () => ({ ok: true, brainRoot: config.brainRoot }));
+
+  // BI-C1: coding surface. Gated behind a bearer token — no token, no sessions API.
+  if (config.sessions) {
+    const store = new SessionStore(config.sessions.sessionsDir);
+    const runner = new SessionRunner({
+      store,
+      sdk: config.sessions.sdk,
+      bashAllowlist: config.sessions.bashAllowlist,
+      approvalTimeoutMs: config.sessions.approvalTimeoutMin * 60_000,
+    });
+    registerSessionRoutes(app, {
+      store,
+      runner,
+      repoAllowlist: config.sessions.repoAllowlist,
+      token: config.sessions.token,
+    });
+  }
 
   app.post('/items', async (req, reply) => {
     if (req.isMultipart()) {
