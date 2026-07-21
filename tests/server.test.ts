@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { appendEvent, readEvents } from '../src/inbox.js';
 import { buildServer } from '../src/server.js';
+import type { SessionSdk } from '../src/sessions/runner.js';
 
 function tmpBrain(): string {
   const root = mkdtempSync(join(tmpdir(), 'brain-'));
@@ -127,5 +128,66 @@ describe('GET /items/:id', () => {
   test('unknown id → 404', async () => {
     const app = buildServer({ brainRoot: tmpBrain() });
     expect((await app.inject({ method: 'GET', url: '/items/2026-07-07-deadbeef' })).statusCode).toBe(404);
+  });
+});
+
+describe('sessions wiring (BI-C1)', () => {
+  test('no sessions config ⇒ sessions routes absent (404, not 401)', async () => {
+    const app = buildServer({ brainRoot: tmpBrain() });
+    const res = await app.inject({ method: 'GET', url: '/sessions' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  test('with sessions config + token, buildServer mounts the guarded sessions API', async () => {
+    const root = tmpBrain();
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'sess-'));
+    const repoPath = mkdtempSync(join(tmpdir(), 'gotam-'));
+    // Fake Agent SDK: one text chunk then a success result — no network.
+    const sdk: SessionSdk = () => {
+      const messages = [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } },
+        { type: 'result', subtype: 'success' },
+      ];
+      let i = 0;
+      return {
+        setPermissionMode: () => Promise.resolve(),
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              Promise.resolve(
+                i < messages.length
+                  ? { value: messages[i++]!, done: false }
+                  : { value: undefined as never, done: true },
+              ),
+          };
+        },
+      };
+    };
+
+    const app = buildServer({
+      brainRoot: root,
+      sessions: {
+        sessionsDir,
+        repoAllowlist: { gotam: repoPath },
+        bashAllowlist: ['git status'],
+        approvalTimeoutMin: 30,
+        token: 'tok',
+        sdk,
+      },
+    });
+
+    expect((await app.inject({ method: 'GET', url: '/sessions' })).statusCode).toBe(401);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { authorization: 'Bearer tok' },
+      payload: { repo: 'gotam', prompt: 'hi' },
+    });
+    expect(created.statusCode).toBe(201);
+    const { id } = created.json();
+    expect(typeof id).toBe('string');
+
+    const list = await app.inject({ method: 'GET', url: '/sessions', headers: { authorization: 'Bearer tok' } });
+    expect(list.json().some((s: { id: string }) => s.id === id)).toBe(true);
   });
 });

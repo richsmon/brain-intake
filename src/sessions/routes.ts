@@ -1,0 +1,185 @@
+// BI-C1: Fastify routes for the sessions module. Bearer-token guard identical
+// in spirit to the live server's Tailscale+token posture — every sessions
+// route requires `Authorization: Bearer <sessionsToken>`. Registered inside an
+// encapsulated plugin so the guard hook applies only to /sessions/*.
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { SessionMeta, SessionStore } from './store.js';
+
+export interface SessionRunnerLike {
+  run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: 'gated' | 'acceptEdits' }): Promise<void>;
+  approve(id: string, requestId: string): boolean;
+  deny(id: string, requestId: string, message?: string): boolean;
+  setMode(id: string, mode: 'gated' | 'acceptEdits'): Promise<boolean>;
+  sendMessage(id: string, text: string): boolean;
+}
+
+export interface SessionRoutesConfig {
+  store: SessionStore;
+  runner: SessionRunnerLike;
+  repoAllowlist: Record<string, string>;
+  token: string;
+}
+
+interface PostSessionBody {
+  repo?: unknown;
+  prompt?: unknown;
+  model?: unknown;
+  effort?: unknown;
+  permissionMode?: unknown;
+}
+
+const MODES = new Set(['gated', 'acceptEdits']);
+
+export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
+  const { store, runner, repoAllowlist, token } = config;
+
+  void app.register((scoped, _opts, done) => {
+    scoped.addHook('onRequest', (req, reply, next) => {
+      const auth = req.headers.authorization;
+      if (auth !== `Bearer ${token}`) {
+        reply.code(401).send({ error: 'unauthorized' });
+        return;
+      }
+      next();
+    });
+
+    scoped.post('/sessions', async (req, reply) => {
+      const body = (req.body ?? {}) as PostSessionBody;
+      const repo = typeof body.repo === 'string' ? body.repo : '';
+      const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+      if (!prompt) return reply.code(400).send({ error: 'prompt required' });
+      const repoPath = repoAllowlist[repo];
+      if (repoPath === undefined) {
+        return reply.code(400).send({ error: `unknown repo: ${repo || '(none)'}` });
+      }
+      const model = typeof body.model === 'string' ? body.model : 'claude-sonnet-5';
+      const permissionMode: 'gated' | 'acceptEdits' =
+        typeof body.permissionMode === 'string' && MODES.has(body.permissionMode)
+          ? (body.permissionMode as 'gated' | 'acceptEdits')
+          : 'gated';
+      const effort = typeof body.effort === 'string' ? body.effort : undefined;
+
+      const meta: SessionMeta = {
+        repo,
+        repoPath,
+        prompt,
+        model,
+        permissionMode,
+        ...(effort !== undefined ? { effort } : {}),
+      };
+      const id = store.createSession(meta);
+      // Fire-and-forget: the session runs independently of this request's lifecycle.
+      void runner
+        .run(id, meta, { model, permissionMode, ...(effort !== undefined ? { effort } : {}) })
+        .catch(() => {
+          store.appendEvent(id, { event: 'status', status: 'error' });
+        });
+      return reply.code(201).send({ id });
+    });
+
+    scoped.get('/sessions', async () => store.listSessions());
+
+    scoped.get<{ Params: { id: string }; Querystring: { offset?: string } }>(
+      '/sessions/:id/events',
+      (req, reply) => {
+        const { id } = req.params;
+        if (!store.has(id)) {
+          void reply.code(404).send({ error: 'unknown session' });
+          return;
+        }
+        const offset = Number(req.query.offset ?? '0');
+        const fromOffset = Number.isInteger(offset) && offset > 0 ? offset : 0;
+        streamEvents(store, id, fromOffset, reply);
+      },
+    );
+
+    scoped.post<{ Params: { id: string }; Body: { requestId?: unknown } }>(
+      '/sessions/:id/approve',
+      async (req, reply) => {
+        if (!store.has(req.params.id)) return reply.code(404).send({ error: 'unknown session' });
+        const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId : '';
+        if (!requestId) return reply.code(400).send({ error: 'requestId required' });
+        if (!runner.approve(req.params.id, requestId)) {
+          return reply.code(409).send({ error: 'no pending approval for that requestId' });
+        }
+        return { ok: true };
+      },
+    );
+
+    scoped.post<{ Params: { id: string }; Body: { requestId?: unknown; message?: unknown } }>(
+      '/sessions/:id/deny',
+      async (req, reply) => {
+        if (!store.has(req.params.id)) return reply.code(404).send({ error: 'unknown session' });
+        const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId : '';
+        if (!requestId) return reply.code(400).send({ error: 'requestId required' });
+        const message = typeof req.body?.message === 'string' ? req.body.message : undefined;
+        if (!runner.deny(req.params.id, requestId, message)) {
+          return reply.code(409).send({ error: 'no pending approval for that requestId' });
+        }
+        return { ok: true };
+      },
+    );
+
+    scoped.post<{ Params: { id: string }; Body: { mode?: unknown } }>(
+      '/sessions/:id/mode',
+      async (req, reply) => {
+        if (!store.has(req.params.id)) return reply.code(404).send({ error: 'unknown session' });
+        const mode = typeof req.body?.mode === 'string' ? req.body.mode : '';
+        if (!MODES.has(mode)) return reply.code(400).send({ error: 'mode must be gated or acceptEdits' });
+        if (!(await runner.setMode(req.params.id, mode as 'gated' | 'acceptEdits'))) {
+          return reply.code(409).send({ error: 'session is not running' });
+        }
+        return { ok: true };
+      },
+    );
+
+    scoped.post<{ Params: { id: string }; Body: { text?: unknown } }>(
+      '/sessions/:id/message',
+      async (req, reply) => {
+        if (!store.has(req.params.id)) return reply.code(404).send({ error: 'unknown session' });
+        const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+        if (!text) return reply.code(400).send({ error: 'text required' });
+        if (!runner.sendMessage(req.params.id, text)) {
+          return reply.code(409).send({ error: 'session is not running' });
+        }
+        return { ok: true };
+      },
+    );
+
+    done();
+  });
+}
+
+function streamEvents(store: SessionStore, id: string, fromOffset: number, reply: FastifyReply): void {
+  reply.raw.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  reply.hijack();
+
+  const write = (event: { event: string } & Record<string, unknown>): void => {
+    reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  const isTerminal = (state: string): boolean => state === 'done' || state === 'error' || state === 'paused';
+
+  const replayed = store.readEvents(id, fromOffset);
+  for (const e of replayed) write(e);
+
+  // If the session already reached a terminal state, the full history is on the
+  // wire — close the stream so `?offset=` re-attach is a clean finite replay.
+  const summary = store.listSessions().find((s) => s.id === id);
+  if (summary && isTerminal(summary.state)) {
+    reply.raw.end();
+    return;
+  }
+
+  const unsubscribe = store.subscribe(id, (event) => {
+    write(event);
+    if (event.event === 'status' && typeof event.status === 'string' && isTerminal(event.status)) {
+      unsubscribe();
+      reply.raw.end();
+    }
+  });
+  reply.raw.on('close', unsubscribe);
+}
