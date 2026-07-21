@@ -6,6 +6,7 @@ import { AppState } from "react-native";
 import ShareIntentHandler from "../components/share-intent-handler";
 import { flushQueue } from "../lib/brain";
 import { registerNotifyTask, runNotifyPass } from "../lib/notify-runtime";
+import { registerForSessionPush, subscribeToPushResponses } from "../lib/push";
 import { ThemeProvider, useTheme } from "../theme";
 
 function ThemedApp() {
@@ -36,13 +37,21 @@ export default function RootLayout() {
   useEffect(() => {
     void flushQueue();
     void registerNotifyTask().then(() => runNotifyPass()).catch(() => {});
+    void registerForSessionPush();
+    const unsubscribePush = subscribeToPushResponses();
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void flushQueue();
         void runNotifyPass().catch(() => {});
+        // Re-register on foreground — picks up a sessions token added in
+        // Settings after launch; the server dedupes repeat registrations.
+        void registerForSessionPush();
       }
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      unsubscribePush();
+    };
   }, []);
 
   return (

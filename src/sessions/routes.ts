@@ -4,6 +4,7 @@
 // encapsulated plugin so the guard hook applies only to /sessions/*.
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { SessionModel } from '../config.js';
+import type { PushTokenStore } from '../push/tokens.js';
 import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 
 export interface SessionRunnerLike {
@@ -22,6 +23,8 @@ export interface SessionRoutesConfig {
   /** BI-C2: picker values for `GET /sessions/meta` — server config is the single source. */
   models: SessionModel[];
   efforts: string[];
+  /** BI-C3: device push-token registry behind `POST /push/register`. Absent ⇒ route not mounted. */
+  pushTokens?: PushTokenStore;
 }
 
 interface PostSessionBody {
@@ -35,7 +38,7 @@ interface PostSessionBody {
 const MODES = new Set(['gated', 'acceptEdits']);
 
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
-  const { store, runner, repoAllowlist, token, models, efforts } = config;
+  const { store, runner, repoAllowlist, token, models, efforts, pushTokens } = config;
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -82,6 +85,17 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
     });
 
     scoped.get('/sessions', async () => store.listSessions());
+
+    // BI-C3: device registration for session pushes. Same bearer guard as the
+    // rest of the plugin; dedupe lives in the token store.
+    if (pushTokens !== undefined) {
+      scoped.post<{ Body: { token?: unknown } }>('/push/register', async (req, reply) => {
+        const pushToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+        if (!pushToken) return reply.code(400).send({ error: 'token required' });
+        const added = pushTokens.register(pushToken);
+        return reply.code(added ? 201 : 200).send({ ok: true });
+      });
+    }
 
     // BI-C2: single source for the app's pickers — repos, models, efforts from config.
     scoped.get('/sessions/meta', async () => ({
