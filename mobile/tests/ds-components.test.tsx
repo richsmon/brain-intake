@@ -8,6 +8,8 @@ import { ItemRow } from "../src/components/ds/item-row";
 import { OfflineBadge } from "../src/components/ds/offline-badge";
 import { RecordingIndicator } from "../src/components/ds/recording-indicator";
 import { ScreenHeader } from "../src/components/ds/screen-header";
+import { UsageCard } from "../src/components/ds/usage-card";
+import type { UsagePeriodTotals } from "../src/lib/sessions";
 import { ThemeProvider } from "../src/theme";
 
 function renderThemed(ui: ReactElement) {
@@ -95,5 +97,42 @@ describe("RecordingIndicator", () => {
     screen.getByText("0:07");
     await fireEvent.press(screen.getByText(/stop/i));
     expect(onStop).toHaveBeenCalled();
+  });
+});
+
+describe("UsageCard (BI-C8)", () => {
+  const totals = (runs: number, input: number, output: number, cost: number): UsagePeriodTotals => ({
+    runs,
+    input_tokens: input,
+    output_tokens: output,
+    cache_creation_input_tokens: 1000,
+    cache_read_input_tokens: 500_000,
+    total_cost_usd: cost,
+  });
+
+  it("shows runs, compact in+out tokens and USD per period, labeled as local runs", async () => {
+    await renderThemed(
+      <UsageCard
+        summary={{
+          today: totals(2, 12_000, 345, 0.43),
+          last7d: totals(9, 2_000_000, 400_000, 12.5),
+          thisMonth: totals(21, 8_000_000, 950, 40.129),
+        }}
+      />,
+    );
+    // Honest labeling — this is our own runs' spend, not subscription limits.
+    screen.getByText("local runs · not plan limits");
+    screen.getByText("today");
+    screen.getByText("7 days");
+    screen.getByText("month");
+    // Tokens are in+out only — the 500k cache reads must NOT inflate the number.
+    screen.getByText("2");
+    screen.getByText("12.3k tok");
+    screen.getByText("$0.43");
+    screen.getByText("9");
+    screen.getByText("2.4M tok");
+    screen.getByText("$12.50");
+    screen.getByText("21");
+    screen.getByText("$40.13");
   });
 });

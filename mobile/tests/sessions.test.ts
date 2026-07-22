@@ -71,6 +71,22 @@ describe("makeSessionsApi", () => {
     expect(calls[0].url).toBe("http://host:8787/sessions/meta");
   });
 
+  it("usageSummary GETs /usage/summary — local-runs totals per period (BI-C8)", async () => {
+    const totals = {
+      runs: 3,
+      input_tokens: 1200,
+      output_tokens: 400,
+      cache_creation_input_tokens: 100,
+      cache_read_input_tokens: 88_000,
+      total_cost_usd: 1.25,
+    };
+    const summary = { today: totals, last7d: totals, thisMonth: totals };
+    const { impl, calls } = fakeFetch(200, summary);
+    expect(await makeSessionsApi(BASE, TOKEN, impl).usageSummary()).toEqual(summary);
+    expect(calls[0].url).toBe("http://host:8787/usage/summary");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer tok-123");
+  });
+
   it("events GETs the poll snapshot with the offset in the query string", async () => {
     const page: EventsPage = { events: [], nextOffset: 7, state: "running" };
     const { impl, calls } = fakeFetch(200, page);
