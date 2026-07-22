@@ -108,12 +108,86 @@ export interface CreateSessionInput {
   permissionMode?: PermissionMode;
 }
 
+// MC-R4: structured review findings — mirror of the server's findings contract
+// (src/sessions/findings.ts there). The server parses the reviewer's fenced
+// findings-json block and serves the result; the app re-validates defensively
+// because the payload ultimately originates from model output.
+
+export type ReviewVerdict = "approve" | "request-changes" | "comment";
+export type FindingSeverity = "high" | "medium" | "low";
+
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = ["high", "medium", "low"];
+
+export interface ReviewFinding {
+  severity: FindingSeverity;
+  file?: string;
+  line?: number;
+  title: string;
+  detail: string;
+}
+
+export interface ReviewFindings {
+  verdict: ReviewVerdict;
+  findings: ReviewFinding[];
+}
+
+const VERDICTS = new Set<string>(["approve", "request-changes", "comment"] satisfies ReviewVerdict[]);
+const SEVERITIES = new Set<string>(FINDING_SEVERITIES);
+
+/** MC-R4: read a `findings` object off a served result event, defensively. */
+export function parseFindingsPayload(v: unknown): ReviewFindings | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const obj = v as Record<string, unknown>;
+  if (typeof obj.verdict !== "string" || !VERDICTS.has(obj.verdict)) return null;
+  if (!Array.isArray(obj.findings)) return null;
+  const findings: ReviewFinding[] = [];
+  for (const entry of obj.findings) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const f = entry as Record<string, unknown>;
+    if (typeof f.severity !== "string" || !SEVERITIES.has(f.severity)) continue;
+    if (typeof f.title !== "string" || f.title.trim() === "") continue;
+    findings.push({
+      severity: f.severity as FindingSeverity,
+      title: f.title,
+      detail: typeof f.detail === "string" ? f.detail : "",
+      ...(typeof f.file === "string" && f.file !== "" ? { file: f.file } : {}),
+      ...(typeof f.line === "number" && Number.isInteger(f.line) && f.line > 0 ? { line: f.line } : {}),
+    });
+  }
+  return { verdict: obj.verdict as ReviewVerdict, findings };
+}
+
+/**
+ * MC-R4: drop the fenced findings-json tail from a summary shown to the human —
+ * the structured section renders it. Only called once findings actually parsed;
+ * an unparseable block stays visible as raw text (better weird than hidden).
+ */
+export function stripFindingsBlock(text: string): string {
+  return text.replace(/```findings-json\s*[\s\S]*?```/g, "").trim();
+}
+
+/** MC-R4: per-severity counts as `/reviews/prs` serves them on lastReview. */
+export interface SeverityCounts {
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface LastReviewFindings {
+  verdict: ReviewVerdict;
+  counts: SeverityCounts;
+  total: number;
+}
+
 /** MC-R3: the most recent review session already launched against a PR. */
 export interface ReviewLastReview {
   sessionId: string;
   ts: string;
   state: SessionState;
   outcome?: "success" | "error";
+  /** MC-R4: verdict + counts once the review produced a parseable findings
+   * block; null when it didn't; absent while the session is still running. */
+  findings?: LastReviewFindings | null;
 }
 
 /** MC-R1: one open PR in the review surface's list (GET /reviews/prs).
@@ -134,8 +208,15 @@ export interface ReviewPr {
   lastReview?: ReviewLastReview | null;
 }
 
-/** MC-R3: "reviewed 2h ago · done" — the PR row's memory line. */
+/** MC-R3: "reviewed 2h ago · done" — the PR row's memory line. MC-R4: once
+ * structured findings exist, the verdict replaces the bare state and the
+ * finding count rides along — "reviewed 2h ago · request-changes · 3 findings". */
 export function formatReviewedLine(last: ReviewLastReview, now: Date = new Date()): string {
+  const f = last.findings;
+  if (f !== undefined && f !== null) {
+    const count = f.total === 1 ? "1 finding" : `${f.total} findings`;
+    return `reviewed ${formatAge(last.ts, now)} ago · ${f.verdict}${f.total > 0 ? ` · ${count}` : ""}`;
+  }
   const label = last.state === "waiting-approval" ? "waiting" : last.state;
   return `reviewed ${formatAge(last.ts, now)} ago · ${label}`;
 }

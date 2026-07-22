@@ -324,6 +324,56 @@ describe('GET /sessions/:id/events.json (BI-C2 poll snapshot)', () => {
     expect(tail.state).toBe('done');
     expect(tail.nextOffset).toBe(5);
   });
+
+  test('review sessions get findings decorated onto served result events (MC-R4)', async () => {
+    const { app, store } = build();
+    const id = store.createSession({
+      repo: 'market-clue/app',
+      repoPath: '/x',
+      prompt: 'review it',
+      model: 'm',
+      permissionMode: 'gated',
+      review: { owner: 'market-clue', repo: 'app', pr: 90 },
+    });
+    const summary = [
+      'One blocker.',
+      '```findings-json',
+      '{"verdict": "request-changes", "findings": [{"severity": "high", "title": "Bug", "detail": "Fix."}]}',
+      '```',
+    ].join('\n');
+    store.appendEvent(id, { event: 'result', outcome: 'success', summary });
+    store.appendEvent(id, { event: 'status', status: 'done' });
+
+    const body = (await app.inject({ method: 'GET', url: `/sessions/${id}/events.json`, headers: AUTH })).json();
+    const result = body.events.find((e: { event: string }) => e.event === 'result');
+    expect(result.findings).toEqual({
+      verdict: 'request-changes',
+      findings: [{ severity: 'high', title: 'Bug', detail: 'Fix.' }],
+    });
+    // The stored JSONL stays raw — decoration happens only on the way out.
+    expect('findings' in store.readEvents(id).find((e) => e.event === 'result')!).toBe(false);
+  });
+
+  test('malformed block ⇒ findings null on review results; coding sessions stay undecorated (MC-R4)', async () => {
+    const { app, store } = build();
+    const review = store.createSession({
+      repo: 'market-clue/app',
+      repoPath: '/x',
+      prompt: 'review it',
+      model: 'm',
+      permissionMode: 'gated',
+      review: { owner: 'market-clue', repo: 'app', pr: 90 },
+    });
+    store.appendEvent(review, { event: 'result', outcome: 'success', summary: '```findings-json\n{oops\n```' });
+    store.appendEvent(review, { event: 'status', status: 'done' });
+    const reviewBody = (await app.inject({ method: 'GET', url: `/sessions/${review}/events.json`, headers: AUTH })).json();
+    expect(reviewBody.events.find((e: { event: string }) => e.event === 'result').findings).toBeNull();
+
+    const coding = store.createSession({ repo: 'gotam', repoPath: '/x', prompt: 'p', model: 'm', permissionMode: 'gated' });
+    store.appendEvent(coding, { event: 'result', outcome: 'success', summary: 'done' });
+    const codingBody = (await app.inject({ method: 'GET', url: `/sessions/${coding}/events.json`, headers: AUTH })).json();
+    expect('findings' in codingBody.events.find((e: { event: string }) => e.event === 'result')).toBe(false);
+  });
 });
 
 describe('approve / deny / mode / message', () => {

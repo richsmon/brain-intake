@@ -9,6 +9,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { SessionModel } from '../config.js';
 import type { PushTokenStore } from '../push/tokens.js';
 import { AUDIO_EXTS, transcribeAudio, type TranscribeDeps } from '../transcribe.js';
+import { parseFindings } from './findings.js';
 import type { SessionPermissionMode } from './runner.js';
 import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 import { makeUsageSummary, type UsageSummary } from './usage.js';
@@ -177,8 +178,15 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
         const offset = Number(req.query.offset ?? '0');
         const fromOffset = Number.isInteger(offset) && offset > 0 ? offset : 0;
         const all = store.readEvents(id);
+        // MC-R4: on review sessions, result events gain `findings` — parsed
+        // lazily from the summary when served (findings: null on a missing or
+        // malformed block, never an error). Plain coding sessions stay raw, as
+        // does the SSE route below (curl/debug path; the app polls this one).
+        const isReview = all.length > 0 && typeof all[0]!.review === 'object' && all[0]!.review !== null;
         return {
-          events: all.filter((e) => e.index >= fromOffset),
+          events: all
+            .filter((e) => e.index >= fromOffset)
+            .map((e) => (isReview && e.event === 'result' ? { ...e, findings: parseFindings(e.summary) } : e)),
           nextOffset: all.length,
           state: sessionState(all),
         };

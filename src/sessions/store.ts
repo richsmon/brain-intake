@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { utcNow } from '../inbox.js';
+import { parseFindings, type ReviewFindings } from './findings.js';
 
 export type SessionEvent = { event: string; ts?: string } & Record<string, unknown>;
 export type StoredEvent = SessionEvent & { index: number };
@@ -56,6 +57,10 @@ export interface SessionSummary extends SessionMeta {
   total_cost_usd?: number;
   /** MC-R3: from the session's last `result` event — how the run ended. */
   outcome?: 'success' | 'error';
+  /** MC-R4: review sessions with a result only — structured findings parsed
+   * lazily from the final message's ```findings-json block; null when the
+   * block is missing or malformed (model output is untrusted). */
+  findings?: ReviewFindings | null;
 }
 
 export class SessionStore {
@@ -142,6 +147,9 @@ export class SessionStore {
         permissionMode: str(created.permissionMode),
         ...(typeof created.effort === 'string' ? { effort: created.effort } : {}),
         ...(review !== null ? { review } : {}),
+        // MC-R4: derived lazily from the stored summary on every list — the
+        // JSONL stays the raw truth, nothing re-parses into a parallel file.
+        ...(review !== null && lastResult !== undefined ? { findings: parseFindings(lastResult.summary) } : {}),
         ...(usage !== null ? { usage } : {}),
         ...(lastResult !== undefined && typeof lastResult.total_cost_usd === 'number'
           ? { total_cost_usd: lastResult.total_cost_usd }

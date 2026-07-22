@@ -225,6 +225,8 @@ describe('GET /reviews/prs', () => {
       ts: '2026-07-22T10:00:00Z',
       state: 'done',
       outcome: 'success',
+      // MC-R4: the summary had no findings-json block — null, never an error.
+      findings: null,
     });
     // The other PRs stay unlinked.
     expect(byKey['market-clue/platform#94'].lastReview).toBeNull();
@@ -261,6 +263,56 @@ describe('GET /reviews/prs', () => {
     const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
     expect(res.statusCode).toBe(200);
     for (const row of res.json()) expect(row.lastReview).toBeNull();
+  });
+
+  test('a done review with a findings block carries verdict + counts by severity (MC-R4)', async () => {
+    const { app, store } = build(ghOk);
+    const summary = [
+      'Two problems worth fixing before merge.',
+      '```findings-json',
+      JSON.stringify({
+        verdict: 'request-changes',
+        findings: [
+          { severity: 'high', file: 'src/auth.ts', line: 12, title: 'Token logged', detail: 'Redact it.' },
+          { severity: 'high', title: 'Missing rate limit', detail: 'Add one.' },
+          { severity: 'low', title: 'Naming nit', detail: 'Rename.' },
+        ],
+      }),
+      '```',
+    ].join('\n');
+    writeSession(store, '2026-07-22-ffffffff', [
+      createdEvent('2026-07-22T12:00:00Z', { owner: 'market-clue', repo: 'app', pr: 90 }),
+      { ts: '2026-07-22T12:09:00Z', event: 'result', outcome: 'success', summary },
+      { ts: '2026-07-22T12:09:00Z', event: 'status', status: 'done' },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const row = res.json().find((r: { owner: string; number: number }) => r.owner === 'market-clue' && r.number === 90);
+    expect(row.lastReview.findings).toEqual({
+      verdict: 'request-changes',
+      counts: { high: 2, medium: 0, low: 1 },
+      total: 3,
+    });
+  });
+
+  test('a malformed findings block ⇒ lastReview.findings null; a running review omits the field (MC-R4)', async () => {
+    const { app, store } = build(ghOk);
+    writeSession(store, '2026-07-22-gggggggg', [
+      createdEvent('2026-07-22T12:00:00Z', { owner: 'market-clue', repo: 'app', pr: 90 }),
+      { ts: '2026-07-22T12:09:00Z', event: 'result', outcome: 'success', summary: '```findings-json\n{broken\n```' },
+      { ts: '2026-07-22T12:09:00Z', event: 'status', status: 'done' },
+    ]);
+    writeSession(store, '2026-07-22-hhhhhhhh', [
+      createdEvent('2026-07-22T13:00:00Z', { owner: 'richsmon', repo: 'brain-intake', pr: 13 }),
+      { ts: '2026-07-22T13:00:01Z', event: 'status', status: 'running' },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const rows = res.json();
+    const done = rows.find((r: { number: number }) => r.number === 90);
+    expect(done.lastReview.findings).toBeNull();
+    const running = rows.find((r: { number: number }) => r.number === 13);
+    expect('findings' in running.lastReview).toBe(false);
   });
 
   test('gh failure ⇒ 502, mirroring the approvals routes', async () => {
@@ -418,5 +470,14 @@ describe('buildReviewPrompt', () => {
     expect(prompt).toContain('pull request #94 in market-clue/platform');
     expect(prompt).toContain('gh pr diff 94 --repo market-clue/platform');
     expect(prompt).toContain('Do not create, edit or delete any files.');
+  });
+
+  test('demands the fenced findings-json tail with the exact contract vocabulary (MC-R4)', () => {
+    const prompt = buildReviewPrompt({ owner: 'market-clue', repo: 'platform', pr: 94 });
+    expect(prompt).toContain('```findings-json');
+    expect(prompt).toContain('"verdict": "approve" | "request-changes" | "comment"');
+    expect(prompt).toContain('"severity": "high" | "medium" | "low"');
+    expect(prompt).toContain('LAST thing in the message');
+    expect(prompt).toContain('{"verdict": "approve", "findings": []}');
   });
 });

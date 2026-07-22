@@ -35,11 +35,13 @@ const mockFakeApi = {
       additions: 1534,
       deletions: 34,
       // MC-R3: this PR already has a review session — the row remembers it.
+      // MC-R4: the review produced structured findings — the row says so.
       lastReview: {
         sessionId: "2026-07-22-aaaa1111",
         ts: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
         state: "done",
         outcome: "success",
+        findings: { verdict: "request-changes", counts: { high: 1, medium: 1, low: 1 }, total: 3 },
       },
     },
     {
@@ -115,7 +117,8 @@ describe("ReviewsScreen", () => {
 
   it("marks already-reviewed PRs with a reviewed line; unreviewed rows stay clean (MC-R3)", async () => {
     await renderReviews();
-    expect(await screen.findByText("reviewed 2h ago · done")).toBeOnTheScreen();
+    // MC-R4: verdict + finding count ride the line once findings exist.
+    expect(await screen.findByText("reviewed 2h ago · request-changes · 3 findings")).toBeOnTheScreen();
     // Only platform#94 was reviewed — lastReview:null and a pre-MC-R3 server
     // payload (field absent, app#90) both render without a line.
     expect(screen.queryAllByText(/^reviewed /)).toHaveLength(1);
@@ -123,7 +126,7 @@ describe("ReviewsScreen", () => {
 
   it("tapping the reviewed line opens that session directly, skipping the launch sheet (MC-R3)", async () => {
     await renderReviews();
-    await fireEvent.press(await screen.findByText("reviewed 2h ago · done"));
+    await fireEvent.press(await screen.findByText("reviewed 2h ago · request-changes · 3 findings"));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/session/[id]",
