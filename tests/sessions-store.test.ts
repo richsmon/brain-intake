@@ -177,6 +177,39 @@ describe('listSessions', () => {
     expect('review' in byId[mangled]!).toBe(false);
     expect('review' in byId[plain]!).toBe(false);
   });
+
+  test('review sessions with a result surface findings parsed from the summary (MC-R4)', () => {
+    const store = tmpStore();
+    const id = store.createSession({ ...META, review: { owner: 'market-clue', repo: 'app', pr: 90 } });
+    const summary = [
+      'One real problem.',
+      '```findings-json',
+      '{"verdict": "request-changes", "findings": [{"severity": "high", "file": "src/a.ts", "line": 3, "title": "Bug", "detail": "Fix it."}]}',
+      '```',
+    ].join('\n');
+    store.appendEvent(id, { event: 'result', outcome: 'success', summary });
+    store.appendEvent(id, { event: 'status', status: 'done' });
+
+    expect(store.listSessions()[0]!.findings).toEqual({
+      verdict: 'request-changes',
+      findings: [{ severity: 'high', file: 'src/a.ts', line: 3, title: 'Bug', detail: 'Fix it.' }],
+    });
+  });
+
+  test('findings is null on a block-less/malformed summary, absent pre-result and on plain sessions (MC-R4)', () => {
+    const store = tmpStore();
+    const noBlock = store.createSession({ ...META, review: { owner: 'market-clue', repo: 'app', pr: 90 } });
+    store.appendEvent(noBlock, { event: 'result', outcome: 'success', summary: 'LGTM, no block' });
+    const running = store.createSession({ ...META, review: { owner: 'market-clue', repo: 'app', pr: 91 } });
+    store.appendEvent(running, { event: 'status', status: 'running' });
+    const plain = store.createSession(META);
+    store.appendEvent(plain, { event: 'result', outcome: 'success', summary: 'coding session' });
+
+    const byId = Object.fromEntries(store.listSessions().map((s) => [s.id, s]));
+    expect(byId[noBlock]!.findings).toBeNull();
+    expect('findings' in byId[running]!).toBe(false);
+    expect('findings' in byId[plain]!).toBe(false);
+  });
 });
 
 describe('subscribe', () => {

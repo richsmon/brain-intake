@@ -27,8 +27,18 @@ export function buildReviewPrompt({ owner, repo, pr }: ReviewBriefInput): string
     '- Findings go into your final message only.',
     '',
     'Deliver the review as your final message, structured as:',
-    '- **Verdict** — approve / request changes / needs discussion, with one sentence why.',
-    '- **Findings** — numbered; each with severity (blocker / major / minor / nit), file and line, what is wrong, and a concrete fix.',
+    '- **Verdict** — approve / request-changes / comment, with one sentence why.',
+    '- **Findings** — numbered; each with severity (high / medium / low), file and line, what is wrong, and a concrete fix.',
     '- **Test gaps** — behavior the diff changes that no test covers.',
+    '',
+    // MC-R4: the machine-readable tail the app renders as structured findings.
+    'END the final message with a machine-readable copy of the same review: a fenced code block tagged `findings-json` containing ONLY one JSON object of exactly this shape:',
+    '',
+    '```findings-json',
+    '{"verdict": "approve" | "request-changes" | "comment",',
+    ' "findings": [{"severity": "high" | "medium" | "low", "file": "src/x.ts", "line": 42, "title": "one-line problem", "detail": "what is wrong and the concrete fix"}]}',
+    '```',
+    '',
+    'Block rules: it is the LAST thing in the message; `file` and `line` are optional — omit them when a finding is not tied to one spot; a clean approve is `{"verdict": "approve", "findings": []}`. The app parses this block to render the review — without it the review shows only as raw text.',
   ].join('\n');
 }

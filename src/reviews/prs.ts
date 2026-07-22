@@ -10,6 +10,7 @@
 // reviewed. Derived from the session store via the `review` ref that POST
 // /reviews stamps into session meta; pre-MC-R3 sessions have no ref and stay
 // unlinked.
+import { severityCounts, type ReviewVerdict, type SeverityCounts } from '../sessions/findings.js';
 import type { SessionSummary } from '../sessions/store.js';
 import type { GhRunner } from './gh.js';
 
@@ -25,12 +26,23 @@ export interface ReviewPr {
   deletions: number;
 }
 
+/** MC-R4: compact findings summary for a PR row — verdict + counts, not the
+ * full finding list (the session detail carries that). */
+export interface LastReviewFindings {
+  verdict: ReviewVerdict;
+  counts: SeverityCounts;
+  total: number;
+}
+
 /** MC-R3: the most recent review session launched against a PR. */
 export interface LastReview {
   sessionId: string;
   ts: string;
   state: SessionSummary['state'];
   outcome?: 'success' | 'error';
+  /** MC-R4: present once the session has a result — the parsed findings
+   * summary, or null when the final message had no usable findings block. */
+  findings?: LastReviewFindings | null;
 }
 
 export interface ReviewPrRow extends ReviewPr {
@@ -59,9 +71,21 @@ export function attachLastReview(prs: ReviewPr[], sessions: SessionSummary[]): R
               ts: last.createdAt,
               state: last.state,
               ...(last.outcome !== undefined ? { outcome: last.outcome } : {}),
+              // MC-R4: verdict + severity counts ride the row so the list can
+              // say "request-changes · 3 findings" without opening the session.
+              ...(last.findings !== undefined ? { findings: toLastReviewFindings(last.findings) } : {}),
             },
     };
   });
+}
+
+function toLastReviewFindings(findings: SessionSummary['findings']): LastReviewFindings | null {
+  if (findings === undefined || findings === null) return null;
+  return {
+    verdict: findings.verdict,
+    counts: severityCounts(findings.findings),
+    total: findings.findings.length,
+  };
 }
 
 const SEARCH_QUERY = `query($q:String!){
