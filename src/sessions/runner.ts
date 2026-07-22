@@ -5,6 +5,9 @@
 //   gated       → Edit/Write/NotebookEdit + Bash-outside-allowlist block on a
 //                 pending-approval promise
 //   acceptEdits → only Bash-outside-allowlist blocks
+//   auto        → nothing blocks: every tool call is allowed straight through
+//                 (no pending promise, no timeout path); the tool_call trail
+//                 still lands in the event log
 //
 // approve()/deny() resolve the pending promise; a pending request older than
 // approvalTimeoutMs is auto-denied and the session is PAUSED (never killed).
@@ -68,10 +71,25 @@ export interface RunnerConfig {
 export interface StartOptions {
   model?: string;
   effort?: string;
-  permissionMode?: 'gated' | 'acceptEdits';
+  permissionMode?: SessionPermissionMode;
 }
 
-type Mode = 'gated' | 'acceptEdits';
+/** Our permission vocabulary — NOT the SDK's (see sdkPermissionMode below). */
+export type SessionPermissionMode = 'gated' | 'acceptEdits' | 'auto';
+
+type Mode = SessionPermissionMode;
+
+/**
+ * Map our mode to the SDK's. Deliberately NOT the SDK's `bypassPermissions`
+ * (or its unrelated classifier mode also named `auto`) for our `auto`:
+ * bypass skips `canUseTool` entirely, which would drop the `tool_call` trail
+ * from the event log and needs `allowDangerouslySkipPermissions`. Keeping the
+ * SDK on `default` keeps every call flowing through our gate, where `auto`
+ * is a plain pass-through.
+ */
+function sdkPermissionMode(mode: Mode): string {
+  return mode === 'acceptEdits' ? 'acceptEdits' : 'default';
+}
 
 interface Pending {
   resolve: (r: SessionPermissionResult) => void;
@@ -87,6 +105,7 @@ export function shouldGate(
   mode: Mode,
   bashAllowlist: string[],
 ): boolean {
+  if (mode === 'auto') return false;
   if (toolName === 'Bash') {
     const command = typeof input.command === 'string' ? input.command.trim() : '';
     const allowed = bashAllowlist.some((prefix) => command === prefix || command.startsWith(`${prefix} `));
@@ -177,7 +196,7 @@ export class SessionRunner {
           canUseTool,
           ...(opts.model !== undefined ? { model: opts.model } : {}),
           ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
-          permissionMode: mode === 'acceptEdits' ? 'acceptEdits' : 'default',
+          permissionMode: sdkPermissionMode(mode),
         },
       });
       controller.query = query;
@@ -292,7 +311,7 @@ export class SessionRunner {
     this.cfg.store.appendEvent(id, { event: 'status', status: 'running' });
     this.cfg.store.appendEvent(id, { event: 'mode', mode });
     if (controller.query?.setPermissionMode) {
-      await controller.query.setPermissionMode(mode === 'acceptEdits' ? 'acceptEdits' : 'default');
+      await controller.query.setPermissionMode(sdkPermissionMode(mode));
     }
     return true;
   }
