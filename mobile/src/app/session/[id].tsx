@@ -20,6 +20,7 @@ import {
   View,
 } from "react-native";
 
+import { DictationButton } from "../../components/ds/dictation-button";
 import { DiffView } from "../../components/ds/diff-view";
 import { SessionStateChip } from "../../components/ds/session-state-chip";
 import { getSessionsApi } from "../../lib/brain";
@@ -418,6 +419,11 @@ export default function SessionDetailScreen() {
               styles.messageInput,
               { borderColor: colors.line, backgroundColor: colors.bgSurface2, color: colors.ink1 },
             ]}
+          />
+          {/* BI-C6: dictate the follow-up; transcript appends to the editable draft. */}
+          <DictationButton
+            onTranscript={(text) => setDraft((d) => (d.trim() ? `${d.trim()} ${text}` : text))}
+            onDictationError={(message) => Alert.alert("Dictation failed", message)}
           />
           <Pressable
             accessibilityRole="button"

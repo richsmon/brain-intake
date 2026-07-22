@@ -161,6 +161,8 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       models: config.sessions.models,
       efforts: config.sessions.efforts,
       pushTokens,
+      // BI-C6: prompt dictation reuses the capture flow's WHISPER_CMD.
+      ...(config.whisperCmd !== undefined ? { whisperCmd: config.whisperCmd } : {}),
     });
     if (config.sessions.reviews) {
       registerReviewRoutes(app, {

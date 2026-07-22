@@ -74,6 +74,19 @@ function buildCommand(whisperCmd: string, audioPath: string): string {
     : `${whisperCmd} ${quoted}`;
 }
 
+/** Run WHISPER_CMD on one audio file and return the cleaned transcript (BI-C6).
+ * The synchronous half of the pipeline — no inbox item, no events — so the
+ * dictation endpoint and the capture flow share one STT implementation. */
+export async function transcribeAudio(
+  audioPath: string,
+  whisperCmd: string,
+  deps: TranscribeDeps = {},
+): Promise<string> {
+  const run = deps.runCommand ?? defaultRunCommand;
+  const raw = await run(buildCommand(whisperCmd, audioPath));
+  return filterHallucinations(raw);
+}
+
 export async function transcribeItem(
   itemDir: string,
   whisperCmd: string,
@@ -86,9 +99,7 @@ export async function transcribeItem(
   const ext = payloadName?.split('.').pop()?.toLowerCase() ?? '';
   if (payloadName === undefined || !AUDIO_EXTS.has(ext)) return 'skipped-not-audio';
 
-  const run = deps.runCommand ?? defaultRunCommand;
-  const raw = await run(buildCommand(whisperCmd, join(itemDir, payloadName)));
-  const transcript = filterHallucinations(raw);
+  const transcript = await transcribeAudio(join(itemDir, payloadName), whisperCmd, deps);
   if (!transcript) return 'empty';
 
   writeFileSync(join(itemDir, 'transcript.md'), transcript, 'utf-8');

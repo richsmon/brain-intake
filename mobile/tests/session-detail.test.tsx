@@ -16,6 +16,19 @@ jest.mock("expo-router", () => {
   };
 });
 
+// BI-C6: the sticky message bar embeds DictationButton, which records via expo-audio.
+jest.mock("expo-audio", () => ({
+  RecordingPresets: { HIGH_QUALITY: {} },
+  requestRecordingPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  useAudioRecorder: () => ({
+    record: jest.fn(),
+    stop: jest.fn(async () => undefined),
+    prepareToRecordAsync: jest.fn(async () => undefined),
+    uri: "file:///recordings/dictation.m4a",
+    currentTime: 0,
+  }),
+}));
+
 const mockApprove = jest.fn(async () => ({ ok: true }));
 const mockDeny = jest.fn(async () => ({ ok: true }));
 const mockSetMode = jest.fn(async () => ({ ok: true }));

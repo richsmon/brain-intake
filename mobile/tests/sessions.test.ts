@@ -277,6 +277,56 @@ describe("startEventsPoll", () => {
   });
 });
 
+describe("transcribe (BI-C6 prompt dictation)", () => {
+  class RecordingFormData {
+    parts: { name: string; value: unknown }[] = [];
+    append(name: string, value: unknown) {
+      this.parts.push({ name, value });
+    }
+  }
+
+  it("POSTs the audio as multipart with the bearer token and returns {text}", async () => {
+    const originalFormData = globalThis.FormData;
+    (globalThis as Record<string, unknown>).FormData = RecordingFormData;
+    try {
+      const { impl, calls } = fakeFetch(200, { text: "add voice input" });
+      const res = await makeSessionsApi(BASE, TOKEN, impl).transcribe({
+        uri: "file:///recordings/dictation.m4a",
+        name: "dictation.m4a",
+        ext: "m4a",
+      });
+      expect(res).toEqual({ text: "add voice input" });
+      expect(calls[0].url).toBe("http://host:8787/sessions/transcribe");
+      expect(calls[0].init.method).toBe("POST");
+      expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer tok-123");
+      const body = calls[0].init.body as unknown as RecordingFormData;
+      expect(body.parts).toEqual([
+        {
+          name: "file",
+          value: { uri: "file:///recordings/dictation.m4a", name: "dictation.m4a", type: "audio/m4a" },
+        },
+      ]);
+    } finally {
+      (globalThis as Record<string, unknown>).FormData = originalFormData;
+    }
+  });
+
+  it("surfaces the 503 WHISPER_CMD-unset answer as an ApiError with the status", async () => {
+    const originalFormData = globalThis.FormData;
+    (globalThis as Record<string, unknown>).FormData = RecordingFormData;
+    try {
+      const { impl } = fakeFetch(503, { error: "transcription unavailable" });
+      const err = await makeSessionsApi(BASE, TOKEN, impl)
+        .transcribe({ uri: "file:///d.m4a", name: "d.m4a", ext: "m4a" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(503);
+    } finally {
+      (globalThis as Record<string, unknown>).FormData = originalFormData;
+    }
+  });
+});
+
 describe("usage formatting (BI-C5)", () => {
   it("parseUsage keeps only well-formed usage objects and defaults cache counters", () => {
     expect(

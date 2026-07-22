@@ -6,7 +6,7 @@
 // makes polling loss-free. Poll only while a session screen is focused, stop on
 // a terminal state.
 
-import { ApiError } from "./api";
+import { ApiError, MIME_BY_EXT } from "./api";
 
 export type SessionState =
   | "created"
@@ -179,13 +179,23 @@ export function isTerminal(state: SessionState): boolean {
 }
 
 const TIMEOUT_MS = 5000;
+// BI-C6: dictation clips ride a multipart upload AND wait for host-side
+// whisper — same reasoning as the capture flow's upload timeout.
+const TRANSCRIBE_TIMEOUT_MS = 120_000;
+
+/** Audio extensions the dictation flow can produce (expo-audio records m4a). */
+export type DictationExt = "m4a" | "mp3" | "wav";
 
 export function makeSessionsApi(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch) {
   const base = baseUrl.replace(/\/+$/, "");
 
-  async function request<T>(path: string, init: Omit<RequestInit, "signal"> = {}): Promise<T> {
+  async function request<T>(
+    path: string,
+    init: Omit<RequestInit, "signal"> = {},
+    timeoutMs: number = TIMEOUT_MS,
+  ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Awaited<ReturnType<typeof fetch>>;
     try {
       res = await fetchImpl(`${base}${path}`, {
@@ -246,6 +256,23 @@ export function makeSessionsApi(baseUrl: string, token: string, fetchImpl: typeo
 
     sendMessage(id: string, text: string): Promise<{ ok: boolean }> {
       return post<{ ok: boolean }>(`/sessions/${encodeURIComponent(id)}/message`, { text });
+    },
+
+    // BI-C6: prompt dictation — audio up, transcript back, nothing stored.
+    // 503 means WHISPER_CMD is unset on the host; callers fall back to typing.
+    transcribe(input: { uri: string; name: string; ext: DictationExt }): Promise<{ text: string }> {
+      const form = new FormData();
+      // React Native FormData file part: {uri, name, type} object.
+      form.append("file", {
+        uri: input.uri,
+        name: input.name,
+        type: MIME_BY_EXT[input.ext],
+      } as unknown as Blob);
+      return request<{ text: string }>(
+        "/sessions/transcribe",
+        { method: "POST", body: form },
+        TRANSCRIBE_TIMEOUT_MS,
+      );
     },
 
     // MC-R1: review surface — same bearer token, same server, so it rides this client.

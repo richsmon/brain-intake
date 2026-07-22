@@ -1,8 +1,8 @@
 // Coding (BI-C2) — the control layer over coding agents on the mini: the
 // session list (live states) and the New Session sheet (repo → prompt → model
-// → effort → mode). Prompt input is text-only in this slice: the capture voice
-// component records audio for server-side transcription and doesn't drop into
-// a TextInput flow trivially.
+// → effort → mode). BI-C6: the prompt can be dictated — record, host-side
+// whisper via POST /sessions/transcribe, transcript appended to the editable
+// prompt field.
 
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 
+import { DictationButton } from "../../components/ds/dictation-button";
 import { EmptyState } from "../../components/ds/empty-state";
 import { ScreenHeader } from "../../components/ds/screen-header";
 import { SessionStateChip } from "../../components/ds/session-state-chip";
@@ -108,6 +109,7 @@ function NewSessionSheet({
   const [effort, setEffort] = useState<string | null>(null);
   const [mode, setMode] = useState<PermissionMode>("gated");
   const [starting, setStarting] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
 
   const ready = repo !== null && model !== null && prompt.trim().length > 0 && !starting;
 
@@ -148,7 +150,16 @@ function NewSessionSheet({
             <PickerRow label="Repo" options={meta.repos} selected={repo} onSelect={setRepo} />
 
             <View style={styles.pickerBlock}>
-              <Text style={[styles.fieldLabel, { color: colors.ink3 }]}>Prompt</Text>
+              <View style={styles.promptHead}>
+                <Text style={[styles.fieldLabel, { color: colors.ink3 }]}>Prompt</Text>
+                <DictationButton
+                  onTranscript={(text) => {
+                    setDictationError(null);
+                    setPrompt((p) => (p.trim() ? `${p.trim()} ${text}` : text));
+                  }}
+                  onDictationError={setDictationError}
+                />
+              </View>
               <TextInput
                 value={prompt}
                 onChangeText={setPrompt}
@@ -160,6 +171,9 @@ function NewSessionSheet({
                   { borderColor: colors.line, backgroundColor: colors.bgSurface2, color: colors.ink1 },
                 ]}
               />
+              {dictationError !== null ? (
+                <Text style={[styles.dictationError, { color: colors.danger }]}>{dictationError}</Text>
+              ) : null}
             </View>
 
             <PickerRow
@@ -391,6 +405,14 @@ const styles = StyleSheet.create({
   },
   pickerBlock: {
     gap: spacing.s2,
+  },
+  promptHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  dictationError: {
+    fontSize: typeScale.bodySm,
   },
   fieldLabel: {
     fontFamily: fonts.mono,

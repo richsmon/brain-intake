@@ -1,7 +1,8 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
+import multipart from '@fastify/multipart';
 import { describe, expect, test } from 'vitest';
 import { SessionStore } from '../src/sessions/store.js';
 import { registerSessionRoutes, type SessionRunnerLike } from '../src/sessions/routes.js';
@@ -53,11 +54,17 @@ const MODELS = [
 ];
 const EFFORTS = ['low', 'high'];
 
-function build(): { app: FastifyInstance; store: SessionStore; runner: FakeRunner; repoPath: string } {
+function build(opts: {
+  whisperCmd?: string;
+  runCommand?: (cmd: string) => Promise<string>;
+} = {}): { app: FastifyInstance; store: SessionStore; runner: FakeRunner; repoPath: string } {
   const store = new SessionStore(mkdtempSync(join(tmpdir(), 'routes-')));
   const runner = new FakeRunner(store);
   const repoPath = mkdtempSync(join(tmpdir(), 'gotam-'));
   const app = Fastify();
+  // Production registers multipart on the app before the sessions plugin
+  // (src/server.ts) — the transcribe route inherits it the same way here.
+  void app.register(multipart);
   registerSessionRoutes(app, {
     store,
     runner,
@@ -65,8 +72,16 @@ function build(): { app: FastifyInstance; store: SessionStore; runner: FakeRunne
     token: TOKEN,
     models: MODELS,
     efforts: EFFORTS,
+    ...(opts.whisperCmd !== undefined ? { whisperCmd: opts.whisperCmd } : {}),
+    ...(opts.runCommand !== undefined ? { transcribeDeps: { runCommand: opts.runCommand } } : {}),
   });
   return { app, store, runner, repoPath };
+}
+
+function audioForm(fileName: string, content: Buffer): FormData {
+  const fd = new FormData();
+  fd.append('file', new Blob([new Uint8Array(content)]), fileName);
+  return fd;
 }
 
 describe('bearer-token guard', () => {
@@ -322,5 +337,92 @@ describe('approve / deny / mode / message', () => {
       (await app.inject({ method: 'POST', url: `/sessions/${id}/message`, headers: AUTH, payload: { text: '  ' } }))
         .statusCode,
     ).toBe(400);
+  });
+});
+
+describe('POST /sessions/transcribe (BI-C6 prompt dictation)', () => {
+  test('runs WHISPER_CMD on the uploaded audio and returns the cleaned transcript', async () => {
+    const commands: string[] = [];
+    const { app } = build({
+      whisperCmd: 'stt {input}',
+      runCommand: async (cmd) => {
+        commands.push(cmd);
+        // Prove the payload actually landed at the path handed to the command.
+        const path = /'(.+)'/.exec(cmd)![1]!;
+        expect(readFileSync(path, 'utf-8')).toBe('fake-audio');
+        return 'Add voice input to the prompt.\nThank you for watching.\n';
+      },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sessions/transcribe',
+      headers: AUTH,
+      payload: audioForm('dictation.m4a', Buffer.from('fake-audio')),
+    });
+    expect(res.statusCode).toBe(200);
+    // Whisper phantom lines are filtered exactly like the capture flow.
+    expect(res.json()).toEqual({ text: 'Add voice input to the prompt.' });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatch(/^stt '.*audio\.m4a'$/);
+  });
+
+  test('WHISPER_CMD unset ⇒ 503 so the app can fall back to typing', async () => {
+    const { app } = build();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sessions/transcribe',
+      headers: AUTH,
+      payload: audioForm('dictation.m4a', Buffer.from('x')),
+    });
+    expect(res.statusCode).toBe(503);
+  });
+
+  test('requires the bearer token like every sessions route', async () => {
+    const { app } = build({ whisperCmd: 'stt', runCommand: async () => 'hi' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sessions/transcribe',
+      payload: audioForm('dictation.m4a', Buffer.from('x')),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  test('non-audio extension ⇒ 400; whisper failure ⇒ 502; silence ⇒ 200 with empty text', async () => {
+    const { app } = build({
+      whisperCmd: 'stt',
+      runCommand: async () => {
+        throw new Error('boom');
+      },
+    });
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/sessions/transcribe',
+          headers: AUTH,
+          payload: audioForm('notes.txt', Buffer.from('x')),
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/sessions/transcribe',
+          headers: AUTH,
+          payload: audioForm('dictation.m4a', Buffer.from('x')),
+        })
+      ).statusCode,
+    ).toBe(502);
+
+    const { app: silent } = build({ whisperCmd: 'stt', runCommand: async () => 'Thank you.\n' });
+    const res = await silent.inject({
+      method: 'POST',
+      url: '/sessions/transcribe',
+      headers: AUTH,
+      payload: audioForm('dictation.m4a', Buffer.from('x')),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ text: '' });
   });
 });
