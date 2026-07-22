@@ -16,6 +16,13 @@ export type SessionState = 'created' | 'running' | 'waiting-approval' | 'paused'
 /** BI-C3: firehose channel for cross-session subscribers (push bridge). */
 const ALL_EVENTS = Symbol('all-events');
 
+/** MC-R3: which PR a review session reviews — set by POST /reviews only. */
+export interface ReviewRef {
+  owner: string;
+  repo: string;
+  pr: number;
+}
+
 export interface SessionMeta {
   repo: string;
   repoPath: string;
@@ -23,6 +30,8 @@ export interface SessionMeta {
   model: string;
   permissionMode: string;
   effort?: string;
+  /** MC-R3: present on review sessions; plain coding sessions never carry it. */
+  review?: ReviewRef;
 }
 
 /**
@@ -45,6 +54,8 @@ export interface SessionSummary extends SessionMeta {
   /** BI-C5: from the session's last `result` event, when the SDK reported usage. */
   usage?: SessionUsage;
   total_cost_usd?: number;
+  /** MC-R3: from the session's last `result` event — how the run ended. */
+  outcome?: 'success' | 'error';
 }
 
 export class SessionStore {
@@ -116,6 +127,9 @@ export class SessionStore {
       // last result event is the session's totals.
       const lastResult = events.filter((e) => e.event === 'result').at(-1);
       const usage = lastResult !== undefined ? toUsage(lastResult.usage) : null;
+      // MC-R3: pre-MC-R3 review sessions never wrote a review ref — they list
+      // as plain sessions and simply stay unlinked from the PR list.
+      const review = toReview(created.review);
       out.push({
         id,
         state: sessionState(events),
@@ -127,9 +141,13 @@ export class SessionStore {
         model: str(created.model),
         permissionMode: str(created.permissionMode),
         ...(typeof created.effort === 'string' ? { effort: created.effort } : {}),
+        ...(review !== null ? { review } : {}),
         ...(usage !== null ? { usage } : {}),
         ...(lastResult !== undefined && typeof lastResult.total_cost_usd === 'number'
           ? { total_cost_usd: lastResult.total_cost_usd }
+          : {}),
+        ...(lastResult !== undefined && (lastResult.outcome === 'success' || lastResult.outcome === 'error')
+          ? { outcome: lastResult.outcome }
           : {}),
       });
     }
@@ -150,6 +168,14 @@ export class SessionStore {
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/** MC-R3: read a review ref off a stored created event, defensively. */
+function toReview(v: unknown): ReviewRef | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.owner !== 'string' || typeof r.repo !== 'string' || typeof r.pr !== 'number') return null;
+  return { owner: r.owner, repo: r.repo, pr: r.pr };
 }
 
 /** BI-C5: read a `usage` object off a stored result event, defensively.

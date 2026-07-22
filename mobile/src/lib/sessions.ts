@@ -108,9 +108,19 @@ export interface CreateSessionInput {
   permissionMode?: PermissionMode;
 }
 
+/** MC-R3: the most recent review session already launched against a PR. */
+export interface ReviewLastReview {
+  sessionId: string;
+  ts: string;
+  state: SessionState;
+  outcome?: "success" | "error";
+}
+
 /** MC-R1: one open PR in the review surface's list (GET /reviews/prs).
  * MC-R2: the list spans the team org and the founder's personal repos, so
- * each row carries `owner`; `repo` stays the short name. */
+ * each row carries `owner`; `repo` stays the short name.
+ * MC-R3: `lastReview` links the newest review session for the PR — null when
+ * none; optional so pre-MC-R3 servers still parse. */
 export interface ReviewPr {
   owner: string;
   repo: string;
@@ -121,6 +131,13 @@ export interface ReviewPr {
   updatedAt: string;
   additions: number;
   deletions: number;
+  lastReview?: ReviewLastReview | null;
+}
+
+/** MC-R3: "reviewed 2h ago · done" — the PR row's memory line. */
+export function formatReviewedLine(last: ReviewLastReview, now: Date = new Date()): string {
+  const label = last.state === "waiting-approval" ? "waiting" : last.state;
+  return `reviewed ${formatAge(last.ts, now)} ago · ${label}`;
 }
 
 /** MC-R1: POST /reviews — the server launches a review as a coding session.

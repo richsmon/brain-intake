@@ -3,7 +3,8 @@
 // launch. The server runs the review as a normal gated coding session, so
 // "Launch review" drops straight into the existing session detail. Reached
 // from the Coding tab's header. Rows show `owner/repo` since the list now
-// spans two owners.
+// spans two owners. MC-R3: rows with a past review session show a tappable
+// "reviewed 2h ago · done" line that reopens that session's detail directly.
 
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -22,7 +23,7 @@ import {
 import { EmptyState } from "../components/ds/empty-state";
 import { ApiError } from "../lib/api";
 import { getSessionsApi } from "../lib/brain";
-import { formatAge, type ReviewPr, type SessionsMeta } from "../lib/sessions";
+import { formatAge, formatReviewedLine, type ReviewPr, type SessionsMeta } from "../lib/sessions";
 import { useTheme } from "../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../theme/tokens";
 
@@ -250,6 +251,23 @@ export default function ReviewsScreen() {
                 <Text style={[styles.rowMono, { color: colors.danger }]}>-{item.deletions}</Text>
                 <Text style={[styles.rowMono, { color: colors.ink3 }]}>{formatAge(item.updatedAt)}</Text>
               </View>
+              {item.lastReview ? (
+                // MC-R3: the list remembers — tap the reviewed line to reopen
+                // that session directly; tapping the row still launches a new one.
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open review session for ${item.owner}/${item.repo} #${item.number}`}
+                  hitSlop={8}
+                  onPress={() =>
+                    router.push({ pathname: "/session/[id]", params: { id: item.lastReview!.sessionId } })
+                  }
+                  style={styles.reviewedLine}
+                >
+                  <Text style={[styles.rowMono, { color: colors.accent }]}>
+                    {formatReviewedLine(item.lastReview)}
+                  </Text>
+                </Pressable>
+              ) : null}
             </Pressable>
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
@@ -294,6 +312,9 @@ const styles = StyleSheet.create({
   },
   spacer: {
     flex: 1,
+  },
+  reviewedLine: {
+    alignSelf: "flex-start",
   },
   prSummary: {
     gap: spacing.s2,

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -100,6 +100,25 @@ function build(gh: GhRunner): {
 
 const ghOk: GhRunner = () => Promise.resolve(graphqlPayload(PR_NODES));
 
+/** Write a session log by hand — deterministic ids/timestamps, unlike createSession. */
+function writeSession(store: SessionStore, id: string, events: Array<Record<string, unknown>>): void {
+  writeFileSync(join(store.dir, `${id}.jsonl`), `${events.map((e) => JSON.stringify(e)).join('\n')}\n`, 'utf-8');
+}
+
+function createdEvent(ts: string, review?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ts,
+    event: 'status',
+    status: 'created',
+    repo: 'market-clue/app',
+    repoPath: '/checkouts/app',
+    prompt: 'review it',
+    model: 'claude-sonnet-5',
+    permissionMode: 'gated',
+    ...(review !== undefined ? { review } : {}),
+  };
+}
+
 describe('listOpenPrs', () => {
   test('ONE GraphQL search call covers org + personal repos, newest activity first', async () => {
     const calls: string[][] = [];
@@ -176,6 +195,74 @@ describe('GET /reviews/prs', () => {
     expect(prs[1]).toMatchObject({ owner: 'market-clue', repo: 'platform', number: 94, author: 'palo-kunovsky' });
   });
 
+  test('rows carry lastReview: null when no review session was ever launched (MC-R3)', async () => {
+    const { app } = build(ghOk);
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    expect(res.statusCode).toBe(200);
+    for (const row of res.json()) expect(row.lastReview).toBeNull();
+  });
+
+  test('a reviewed PR links its MOST RECENT review session with ts/state/outcome (MC-R3)', async () => {
+    const { app, store } = build(ghOk);
+    // Two review sessions against market-clue/app#90 — the newer one wins.
+    writeSession(store, '2026-07-21-aaaaaaaa', [
+      createdEvent('2026-07-21T09:00:00Z', { owner: 'market-clue', repo: 'app', pr: 90 }),
+      { ts: '2026-07-21T09:05:00Z', event: 'result', outcome: 'error', summary: 'crashed' },
+      { ts: '2026-07-21T09:05:00Z', event: 'status', status: 'error' },
+    ]);
+    writeSession(store, '2026-07-22-bbbbbbbb', [
+      createdEvent('2026-07-22T10:00:00Z', { owner: 'market-clue', repo: 'app', pr: 90 }),
+      { ts: '2026-07-22T10:07:00Z', event: 'result', outcome: 'success', summary: 'LGTM' },
+      { ts: '2026-07-22T10:07:00Z', event: 'status', status: 'done' },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const byKey = Object.fromEntries(
+      res.json().map((r: { owner: string; repo: string; number: number }) => [`${r.owner}/${r.repo}#${r.number}`, r]),
+    );
+    expect(byKey['market-clue/app#90'].lastReview).toEqual({
+      sessionId: '2026-07-22-bbbbbbbb',
+      ts: '2026-07-22T10:00:00Z',
+      state: 'done',
+      outcome: 'success',
+    });
+    // The other PRs stay unlinked.
+    expect(byKey['market-clue/platform#94'].lastReview).toBeNull();
+    expect(byKey['richsmon/brain-intake#13'].lastReview).toBeNull();
+  });
+
+  test('a still-running review links without an outcome (MC-R3)', async () => {
+    const { app, store } = build(ghOk);
+    writeSession(store, '2026-07-22-cccccccc', [
+      createdEvent('2026-07-22T11:00:00Z', { owner: 'richsmon', repo: 'brain-intake', pr: 13 }),
+      { ts: '2026-07-22T11:00:01Z', event: 'status', status: 'running' },
+    ]);
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const row = res.json().find((r: { number: number }) => r.number === 13);
+    expect(row.lastReview).toEqual({
+      sessionId: '2026-07-22-cccccccc',
+      ts: '2026-07-22T11:00:00Z',
+      state: 'running',
+    });
+  });
+
+  test('pre-MC-R3 sessions (no review ref) and other-PR sessions never link', async () => {
+    const { app, store } = build(ghOk);
+    // Old review session from before the ref existed — indistinguishable from a coding session.
+    writeSession(store, '2026-07-20-dddddddd', [
+      createdEvent('2026-07-20T08:00:00Z'),
+      { ts: '2026-07-20T08:09:00Z', event: 'status', status: 'done' },
+    ]);
+    // A review of a PR that is no longer open.
+    writeSession(store, '2026-07-20-eeeeeeee', [
+      createdEvent('2026-07-20T09:00:00Z', { owner: 'market-clue', repo: 'app', pr: 77 }),
+      { ts: '2026-07-20T09:04:00Z', event: 'status', status: 'done' },
+    ]);
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    expect(res.statusCode).toBe(200);
+    for (const row of res.json()) expect(row.lastReview).toBeNull();
+  });
+
   test('gh failure ⇒ 502, mirroring the approvals routes', async () => {
     const { app } = build(() => Promise.reject(new Error('gh exploded')));
     const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
@@ -204,13 +291,31 @@ describe('POST /reviews', () => {
     expect(meta.permissionMode).toBe('gated');
     expect(opts).toEqual({ model: 'claude-opus-4-8', permissionMode: 'gated', effort: 'high' });
 
-    // The session shows up in the store exactly like a coding session would.
+    // The session shows up in the store exactly like a coding session would —
+    // plus the MC-R3 review ref that links it back to the PR list.
     expect(store.readEvents(sessionId)[0]).toMatchObject({
       event: 'status',
       status: 'created',
       repo: 'market-clue/app',
       model: 'claude-opus-4-8',
+      review: { owner: 'market-clue', repo: 'app', pr: 90 },
     });
+  });
+
+  test('a launched review immediately shows as lastReview on its PR row (MC-R3 round-trip)', async () => {
+    const { app } = build(ghOk);
+    const post = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { repo: 'app', pr: 90 },
+    });
+    const { sessionId } = post.json();
+
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const row = res.json().find((r: { owner: string; number: number }) => r.owner === 'market-clue' && r.number === 90);
+    expect(row.lastReview).toMatchObject({ sessionId, state: 'created' });
+    expect(typeof row.lastReview.ts).toBe('string');
   });
 
   test('owner=richsmon resolves the checkout under the personal root (MC-R2)', async () => {

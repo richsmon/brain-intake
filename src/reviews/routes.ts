@@ -7,6 +7,10 @@
 // exists under the owner's checkout root — a repo without one gets a 409 with
 // the expected path. This slice never clones anything.
 //
+// MC-R3: POST /reviews stamps a `review: {owner, repo, pr}` ref into session
+// meta, and GET /reviews/prs joins the session store back onto each PR row as
+// `lastReview` — the list remembers which PRs already have a review session.
+//
 // MC-R2: two owners. The team org's checkouts live under `checkoutRoot`
 // (`~/code/market-clue` by default); the founder's personal repos live under
 // `ownRoot` (`~/code` by default). POST /reviews accepts `owner` and defaults
@@ -17,7 +21,7 @@ import type { FastifyInstance } from 'fastify';
 import type { SessionRunnerLike } from '../sessions/routes.js';
 import type { SessionMeta, SessionStore } from '../sessions/store.js';
 import type { GhRunner } from './gh.js';
-import { listOpenPrs } from './prs.js';
+import { attachLastReview, listOpenPrs } from './prs.js';
 import { buildReviewPrompt } from './prompt.js';
 
 export interface ReviewRoutesConfig {
@@ -67,7 +71,9 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
 
     scoped.get('/reviews/prs', async (_req, reply) => {
       try {
-        return await listOpenPrs(gh, org, ownUser);
+        const prs = await listOpenPrs(gh, org, ownUser);
+        // MC-R3: the list remembers — each row links its most recent review session.
+        return attachLastReview(prs, store.listSessions());
       } catch (err) {
         app.log.error({ err }, 'gh PR listing failed');
         return reply.code(502).send({ error: 'gh unavailable' });
@@ -109,6 +115,8 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
         // Reviews are read-only by design — gated blocks every edit on approval.
         permissionMode: 'gated',
         ...(effort !== undefined ? { effort } : {}),
+        // MC-R3: stamp which PR this session reviews so /reviews/prs can link back.
+        review: { owner, repo, pr },
       };
       const id = store.createSession(meta);
       void runner
