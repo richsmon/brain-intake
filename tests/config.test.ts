@@ -163,6 +163,14 @@ describe('review surface config (MC-R1)', () => {
     expect(cfg.reviewsCheckoutRoot.endsWith(join('code', 'market-clue'))).toBe(true);
   });
 
+  test('MC-R2 defaults: richsmon personal repos, checkouts under ~/code', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({ BRAIN_ROOT: root });
+    expect(cfg.reviewsOwnUser).toBe('richsmon');
+    expect(cfg.reviewsOwnRoot.endsWith('code')).toBe(true);
+    expect(cfg.reviewsOwnRoot.endsWith(join('code', 'market-clue'))).toBe(false);
+  });
+
   test('REVIEWS_ORG and REVIEWS_CHECKOUT_ROOT override the defaults', () => {
     const root = tmpBrain();
     const cfg = loadConfig({
@@ -172,5 +180,16 @@ describe('review surface config (MC-R1)', () => {
     });
     expect(cfg.reviewsOrg).toBe('acme');
     expect(cfg.reviewsCheckoutRoot).toBe('/srv/checkouts');
+  });
+
+  test('REVIEWS_OWN_USER and REVIEWS_OWN_ROOT override the MC-R2 defaults', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({
+      BRAIN_ROOT: root,
+      REVIEWS_OWN_USER: 'someone-else',
+      REVIEWS_OWN_ROOT: '/srv/own',
+    });
+    expect(cfg.reviewsOwnUser).toBe('someone-else');
+    expect(cfg.reviewsOwnRoot).toBe('/srv/own');
   });
 });

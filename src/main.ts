@@ -46,6 +46,8 @@ const app = buildServer({
           reviews: {
             org: config.reviewsOrg,
             checkoutRoot: config.reviewsCheckoutRoot,
+            ownUser: config.reviewsOwnUser,
+            ownRoot: config.reviewsOwnRoot,
             gh: createRealGhRunner(),
           },
         },
