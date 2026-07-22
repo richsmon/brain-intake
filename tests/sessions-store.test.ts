@@ -147,6 +147,36 @@ describe('listSessions', () => {
     expect('usage' in listed).toBe(false);
     expect('total_cost_usd' in listed).toBe(false);
   });
+
+  test('surfaces the review ref from the created event and outcome from the last result (MC-R3)', () => {
+    const store = tmpStore();
+    const id = store.createSession({ ...META, review: { owner: 'market-clue', repo: 'app', pr: 90 } });
+    store.appendEvent(id, { event: 'result', outcome: 'error', summary: 'boom' });
+    store.appendEvent(id, { event: 'status', status: 'error' });
+
+    expect(store.listSessions()[0]).toMatchObject({
+      id,
+      review: { owner: 'market-clue', repo: 'app', pr: 90 },
+      outcome: 'error',
+    });
+  });
+
+  test('sessions without a review ref omit the field; malformed refs are dropped (MC-R3)', () => {
+    const store = tmpStore();
+    const plain = store.createSession(META);
+    const listed = store.listSessions()[0]!;
+    expect('review' in listed).toBe(false);
+    expect('outcome' in listed).toBe(false);
+
+    // A hand-mangled ref (e.g. pr as a string) must not crash the listing.
+    const mangled = store.createSession({
+      ...META,
+      review: { owner: 'market-clue', repo: 'app', pr: '90' } as unknown as { owner: string; repo: string; pr: number },
+    });
+    const byId = Object.fromEntries(store.listSessions().map((s) => [s.id, s]));
+    expect('review' in byId[mangled]!).toBe(false);
+    expect('review' in byId[plain]!).toBe(false);
+  });
 });
 
 describe('subscribe', () => {
