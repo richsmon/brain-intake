@@ -20,7 +20,26 @@ export const DEFAULT_SESSION_MODELS: SessionModel[] = [
 export const DEFAULT_SESSION_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** BI-C1: bash commands the sessions permission gate lets through without approval.
- * MC-R1 adds the read-only `gh pr` reads a review session needs to fetch its diff. */
+ * MC-R1 adds the read-only `gh pr` reads a review session needs to fetch its diff.
+ * MC-R5 adds the read-only inspection commands a review session leans on
+ * constantly (grep/cat/head/... tripped a gate on every step of PR #18's review).
+ *
+ * Matching (runner `shouldGate`): an entry passes when the command IS the entry
+ * or starts with `${entry} ` — so multi-word entries like `sed -n` match on a
+ * word boundary (`sed -ne`/`sed -ni` do NOT match). The gate is a tap-saver
+ * against a cooperative agent, not a sandbox: shell operators after an allowed
+ * prefix (`cat a && rm b`) pierce ANY prefix, existing entries included. Each
+ * entry below is therefore judged by whether its natural argument
+ * continuations stay read-only:
+ * - `grep`, `rg`: pure search — neither has a flag that writes files.
+ * - `cat`, `head`, `tail`, `wc`: read files/stdin, write only to stdout;
+ *   mutating them requires a shell redirect, which is outside this model.
+ * - `sed -n`: print-selected-lines mode, the read-only sed idiom
+ *   (`sed -n '12,40p' file`). The in-place spelling is `sed -i`, which fails
+ *   the prefix. Bare `sed` is deliberately NOT listed for exactly that reason.
+ * - `find` is deliberately NOT listed: any useful prefix (`find .`,
+ *   `find . -name`) can be continued with `-delete`/`-exec`, so no prefix-safe
+ *   form exists — sessions can use `rg --files` or `ls` instead. */
 export const DEFAULT_BASH_ALLOWLIST = [
   'git status',
   'git diff',
@@ -32,6 +51,13 @@ export const DEFAULT_BASH_ALLOWLIST = [
   'pytest',
   'gh pr view',
   'gh pr diff',
+  'grep',
+  'rg',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'sed -n',
 ];
 
 /** MC-R1: defaults for the review surface — the org whose PRs are listed and
