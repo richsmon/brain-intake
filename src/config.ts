@@ -19,7 +19,8 @@ export const DEFAULT_SESSION_MODELS: SessionModel[] = [
 /** BI-C2: reasoning-effort levels the picker offers. Override via SESSION_EFFORTS. */
 export const DEFAULT_SESSION_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-/** BI-C1: bash commands the sessions permission gate lets through without approval. */
+/** BI-C1: bash commands the sessions permission gate lets through without approval.
+ * MC-R1 adds the read-only `gh pr` reads a review session needs to fetch its diff. */
 export const DEFAULT_BASH_ALLOWLIST = [
   'git status',
   'git diff',
@@ -29,7 +30,13 @@ export const DEFAULT_BASH_ALLOWLIST = [
   'npm run test',
   'npx vitest',
   'pytest',
+  'gh pr view',
+  'gh pr diff',
 ];
+
+/** MC-R1: defaults for the review surface — the org whose PRs are listed and
+ * the directory local checkouts live under (`{root}/{repo}`). */
+export const DEFAULT_REVIEWS_ORG = 'market-clue';
 
 /** BI-C3: direct-APNs push config — all-or-nothing from APNS_* env vars. */
 export interface ApnsEnvConfig {
@@ -68,6 +75,10 @@ export interface AppConfig {
   sessionEfforts: string[];
   /** BI-C3: direct-APNs push. Unset ⇒ pushes are a silent no-op. */
   apns?: ApnsEnvConfig;
+  /** MC-R1: GitHub org the review surface lists open PRs for. */
+  reviewsOrg: string;
+  /** MC-R1: local checkouts of review repos live at `{root}/{repo}`. */
+  reviewsCheckoutRoot: string;
 }
 
 function parseApns(env: Record<string, string | undefined>): ApnsEnvConfig | undefined {
@@ -168,6 +179,11 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     approvalTimeoutMin,
     sessionModels,
     sessionEfforts,
+    reviewsOrg: env.REVIEWS_ORG !== undefined && env.REVIEWS_ORG !== '' ? env.REVIEWS_ORG : DEFAULT_REVIEWS_ORG,
+    reviewsCheckoutRoot:
+      env.REVIEWS_CHECKOUT_ROOT !== undefined && env.REVIEWS_CHECKOUT_ROOT !== ''
+        ? env.REVIEWS_CHECKOUT_ROOT
+        : join(homedir(), 'code', DEFAULT_REVIEWS_ORG),
     ...(env.WHISPER_CMD !== undefined && env.WHISPER_CMD !== ''
       ? { whisperCmd: env.WHISPER_CMD }
       : {}),
