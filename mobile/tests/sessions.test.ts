@@ -2,9 +2,11 @@ import {
   ApiError,
 } from "../src/lib/api";
 import {
+  PERMISSION_MODES,
   POLL_INTERVAL_MS,
   isTerminal,
   makeSessionsApi,
+  permissionModeLabel,
   startEventsPoll,
   type EventsPage,
 } from "../src/lib/sessions";
@@ -76,7 +78,7 @@ describe("makeSessionsApi", () => {
     const api = makeSessionsApi(BASE, TOKEN, impl);
     await api.approve("s1", "r1");
     await api.deny("s1", "r2", "no thanks");
-    await api.setMode("s1", "acceptEdits");
+    await api.setMode("s1", "auto");
     await api.sendMessage("s1", "keep going");
     expect(calls.map((c) => c.url)).toEqual([
       "http://host:8787/sessions/s1/approve",
@@ -86,13 +88,22 @@ describe("makeSessionsApi", () => {
     ]);
     expect(JSON.parse(calls[0].init.body as string)).toEqual({ requestId: "r1" });
     expect(JSON.parse(calls[1].init.body as string)).toEqual({ requestId: "r2", message: "no thanks" });
-    expect(JSON.parse(calls[2].init.body as string)).toEqual({ mode: "acceptEdits" });
+    expect(JSON.parse(calls[2].init.body as string)).toEqual({ mode: "auto" });
     expect(JSON.parse(calls[3].init.body as string)).toEqual({ text: "keep going" });
   });
 
   it("maps HTTP failures to ApiError", async () => {
     const { impl } = fakeFetch(401, { error: "unauthorized" });
     await expect(makeSessionsApi(BASE, "wrong", impl).list()).rejects.toThrow(ApiError);
+  });
+});
+
+describe("permission modes (BI-C4)", () => {
+  it("offers the three modes with gated first (the default) and labels each", () => {
+    expect(PERMISSION_MODES).toEqual(["gated", "acceptEdits", "auto"]);
+    expect(permissionModeLabel("gated")).toBe("gated (approve edits)");
+    expect(permissionModeLabel("acceptEdits")).toBe("acceptEdits");
+    expect(permissionModeLabel("auto")).toBe("auto (no gates)");
   });
 });
 

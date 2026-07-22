@@ -16,7 +16,21 @@ export type SessionState =
   | "done"
   | "error";
 
-export type PermissionMode = "gated" | "acceptEdits";
+// BI-C4: `auto` = no permission gates at all — the server allows every tool call.
+export type PermissionMode = "gated" | "acceptEdits" | "auto";
+
+export const PERMISSION_MODES: readonly PermissionMode[] = ["gated", "acceptEdits", "auto"];
+
+export function permissionModeLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case "gated":
+      return "gated (approve edits)";
+    case "acceptEdits":
+      return "acceptEdits";
+    case "auto":
+      return "auto (no gates)";
+  }
+}
 
 export interface SessionEvent {
   index: number;
