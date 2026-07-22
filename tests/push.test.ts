@@ -13,7 +13,7 @@ import {
   type ApnsKeyConfig,
   type ApnsTransport,
 } from '../src/push/apns.js';
-import { PushSender, apnsPayload } from '../src/push/sender.js';
+import { PushSender, apnsPayload, formatAttempt, type PushSendAttempt } from '../src/push/sender.js';
 import { pushForEvent, sessionDeepLink, wireSessionPush } from '../src/push/wire.js';
 import { SessionStore } from '../src/sessions/store.js';
 import type { SessionSdk } from '../src/sessions/runner.js';
@@ -39,7 +39,7 @@ interface SentRequest {
 }
 
 function captureTransport(
-  respond: (req: SentRequest) => { status: number; body: string } = () => ({ status: 200, body: '' }),
+  respond: (req: SentRequest) => { status: number; body: string; apnsId?: string } = () => ({ status: 200, body: '' }),
 ) {
   const calls: SentRequest[] = [];
   const transport: ApnsTransport = async (endpoint, path, headers, body) => {
@@ -71,6 +71,36 @@ describe('PushTokenStore', () => {
     const corruptDir = tmp();
     writeFileSync(join(corruptDir, 'push-tokens.json'), 'not json', 'utf-8');
     expect(new PushTokenStore(corruptDir).list()).toEqual([]);
+  });
+
+  // BI-C7 T-22: per-token delivery status lives next to the token, so
+  // GET /push/status can answer "did the last push reach this device?".
+  test('recordSend persists lastSend next to the token across instances', () => {
+    const dir = tmp();
+    const store = new PushTokenStore(dir);
+    store.register('devicetoken-abcdef12');
+    store.recordSend('devicetoken-abcdef12', { ts: '2026-07-22T17:13:00Z', ok: false, status: 403 });
+    expect(new PushTokenStore(dir).entries()).toEqual([
+      { token: 'devicetoken-abcdef12', lastSend: { ts: '2026-07-22T17:13:00Z', ok: false, status: 403 } },
+    ]);
+  });
+
+  test('recordSend for an unknown token is a no-op', () => {
+    const store = new PushTokenStore(tmp());
+    store.register('known');
+    store.recordSend('unknown', { ts: '2026-07-22T17:13:00Z', ok: true, status: 200 });
+    expect(store.entries()).toEqual([{ token: 'known' }]);
+  });
+
+  test('loads the legacy plain-string registry format and upgrades it on write', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'push-tokens.json'), '["legacy-token-1234"]\n', 'utf-8');
+    const store = new PushTokenStore(dir);
+    expect(store.list()).toEqual(['legacy-token-1234']);
+    store.recordSend('legacy-token-1234', { ts: '2026-07-22T19:43:00Z', ok: true, status: 200 });
+    expect(new PushTokenStore(dir).entries()).toEqual([
+      { token: 'legacy-token-1234', lastSend: { ts: '2026-07-22T19:43:00Z', ok: true, status: 200 } },
+    ]);
   });
 });
 
@@ -192,7 +222,7 @@ describe('PushSender', () => {
     };
     const sender = new PushSender({ tokens, client: new ApnsClient(KEY, boom), onError: (e) => errors.push(e) });
     await sender.send({ title: 't', body: 'b' });
-    expect(errors).toHaveLength(1);
+    expect(errors).toHaveLength(2); // BI-C7: one per attempt — network errors get a single retry
     expect(tokens.list()).toEqual(['t1']); // transport errors never evict
   });
 
@@ -200,6 +230,95 @@ describe('PushSender', () => {
     expect(apnsPayload({ title: 'a', body: 'b' })).toEqual({
       aps: { alert: { title: 'a', body: 'b' }, sound: 'default' },
     });
+  });
+});
+
+// BI-C7 T-22: every send attempt is observable — the exact hole the T-15 e2e
+// exposed (first gate push vanished with zero trace).
+describe('PushSender attempt reporting + retry (BI-C7)', () => {
+  function harness(respond?: Parameters<typeof captureTransport>[0]) {
+    const tokens = new PushTokenStore(tmp());
+    tokens.register('devicetoken-abcdef12');
+    const attempts: PushSendAttempt[] = [];
+    const errors: unknown[] = [];
+    const { calls, transport } = captureTransport(respond);
+    const sender = new PushSender({
+      tokens,
+      client: new ApnsClient(KEY, transport),
+      onAttempt: (a) => attempts.push(a),
+      onError: (e) => errors.push(e),
+    });
+    return { tokens, attempts, errors, calls, sender };
+  }
+
+  test('success: one attempt with token suffix, status and apns-id; lastSend ok', async () => {
+    const { tokens, attempts, sender } = harness(() => ({ status: 200, body: '', apnsId: 'A1B2-C3D4' }));
+    await sender.send({ title: 't', body: 'b' });
+    expect(attempts).toEqual([
+      { tokenSuffix: 'abcdef12', attempt: 1, ok: true, status: 200, apnsId: 'A1B2-C3D4' },
+    ]);
+    expect(tokens.entries()[0]!.lastSend).toMatchObject({ ok: true, status: 200 });
+  });
+
+  test('HTTP 4xx: reported, recorded, NOT retried', async () => {
+    const { tokens, attempts, errors, calls, sender } = harness(() => ({
+      status: 403,
+      body: '{"reason":"InvalidProviderToken"}',
+    }));
+    await sender.send({ title: 't', body: 'b' });
+    expect(calls).toHaveLength(1); // no retry on an APNs verdict
+    expect(attempts).toEqual([{ tokenSuffix: 'abcdef12', attempt: 1, ok: false, status: 403 }]);
+    expect(tokens.entries()[0]!.lastSend).toMatchObject({ ok: false, status: 403 });
+    expect(errors).toHaveLength(1);
+  });
+
+  test('network-class error: exactly one retry, success on the second attempt', async () => {
+    let n = 0;
+    const { tokens, attempts, sender } = harness(() => {
+      n += 1;
+      if (n === 1) throw new Error('socket hang up');
+      return { status: 200, body: '' };
+    });
+    await sender.send({ title: 't', body: 'b' });
+    expect(attempts).toEqual([
+      { tokenSuffix: 'abcdef12', attempt: 1, ok: false, error: 'Error: socket hang up' },
+      { tokenSuffix: 'abcdef12', attempt: 2, ok: true, status: 200 },
+    ]);
+    expect(tokens.entries()[0]!.lastSend).toMatchObject({ ok: true, status: 200 });
+  });
+
+  test('network-class error twice: two attempts, then give up with lastSend recorded', async () => {
+    const { tokens, attempts, calls, sender } = harness(() => {
+      throw new Error('APNs request timed out after 10000ms');
+    });
+    await sender.send({ title: 't', body: 'b' });
+    expect(calls).toHaveLength(2); // single retry, never more
+    expect(attempts.map((a) => a.ok)).toEqual([false, false]);
+    expect(tokens.entries()[0]!.lastSend).toMatchObject({
+      ok: false,
+      error: 'Error: APNs request timed out after 10000ms',
+    });
+  });
+
+  test('410 Unregistered evicts on the spot — no retry, no lastSend for a dead token', async () => {
+    const { tokens, calls, sender } = harness(() => ({ status: 410, body: '{"reason":"Unregistered"}' }));
+    await sender.send({ title: 't', body: 'b' });
+    expect(calls).toHaveLength(1);
+    expect(tokens.entries()).toEqual([]);
+  });
+});
+
+describe('formatAttempt', () => {
+  test('one concise line: suffix, attempt, outcome, status, apns-id', () => {
+    expect(formatAttempt({ tokenSuffix: '98b1ad2d', attempt: 1, ok: true, status: 200, apnsId: 'AAA-BBB' })).toBe(
+      '[push] …98b1ad2d attempt 1 ok status=200 apns-id=AAA-BBB',
+    );
+    expect(
+      formatAttempt({ tokenSuffix: '98b1ad2d', attempt: 2, ok: false, error: 'Error: APNs request timed out after 10000ms' }),
+    ).toBe('[push] …98b1ad2d attempt 2 FAIL Error: APNs request timed out after 10000ms');
+    expect(formatAttempt({ tokenSuffix: '98b1ad2d', attempt: 1, ok: false, status: 403 })).toBe(
+      '[push] …98b1ad2d attempt 1 FAIL status=403',
+    );
   });
 });
 
@@ -357,6 +476,60 @@ describe('push over the full server (BI-C3 direct APNs wiring)', () => {
     });
   });
 
+  // BI-C7 T-22: the attempt line goes through pushLog — console-backed in
+  // production, so it lands in the launchd log file even though the Fastify
+  // request logger is disabled there (the T-15 zero-trace hole).
+  test('every send attempt lands in pushLog and GET /push/status, success or failure', async () => {
+    const lines: string[] = [];
+    const { transport } = captureTransport(() => ({
+      status: 403,
+      body: '{"reason":"InvalidProviderToken"}',
+    }));
+    const app = buildServer({
+      brainRoot: tmp(),
+      sessions: {
+        sessionsDir: tmp(),
+        repoAllowlist: { gotam: tmp() },
+        bashAllowlist: [],
+        approvalTimeoutMin: 30,
+        token: 'tok',
+        models: [{ id: 'claude-sonnet-5', label: 'Sonnet' }],
+        efforts: ['high'],
+        sdk: gatingSdk(),
+        apns: KEY,
+        apnsTransport: transport,
+        pushLog: (line) => lines.push(line),
+      },
+    });
+    const auth = { authorization: 'Bearer tok' };
+    await app.inject({
+      method: 'POST',
+      url: '/push/register',
+      headers: auth,
+      payload: { token: 'devicetoken-abcdef12' },
+    });
+
+    expect((await app.inject({ method: 'GET', url: '/push/status' })).statusCode).toBe(401);
+    let status = await app.inject({ method: 'GET', url: '/push/status', headers: auth });
+    expect(status.json()).toEqual({ configured: true, tokens: [{ suffix: 'abcdef12' }] });
+
+    await app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: auth,
+      payload: { repo: 'gotam', prompt: 'fix login', permissionMode: 'gated' },
+    });
+    await vi.waitFor(() => expect(lines.length).toBeGreaterThan(0));
+    expect(lines[0]).toContain('…abcdef12');
+    expect(lines[0]).toContain('FAIL status=403');
+
+    status = await app.inject({ method: 'GET', url: '/push/status', headers: auth });
+    expect(status.json()).toMatchObject({
+      configured: true,
+      tokens: [{ suffix: 'abcdef12', lastSend: { ok: false, status: 403 } }],
+    });
+  });
+
   test('no APNs key configured ⇒ registration still works, session runs to done, zero APNs traffic', async () => {
     const { calls, transport } = captureTransport();
     const sdk: SessionSdk = () => {
@@ -397,5 +570,9 @@ describe('push over the full server (BI-C3 direct APNs wiring)', () => {
       expect((list.json() as Array<{ id: string; state: string }>).find((s) => s.id === id)?.state).toBe('done');
     });
     expect(calls).toHaveLength(0);
+
+    // BI-C7: /push/status says so instead of pretending delivery works.
+    const status = await app.inject({ method: 'GET', url: '/push/status', headers: auth });
+    expect(status.json()).toMatchObject({ configured: false });
   });
 });

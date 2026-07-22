@@ -13,7 +13,7 @@ import { SessionStore } from './sessions/store.js';
 import { SessionRunner, type SessionSdk } from './sessions/runner.js';
 import { registerSessionRoutes } from './sessions/routes.js';
 import { PushTokenStore } from './push/tokens.js';
-import { PushSender } from './push/sender.js';
+import { PushSender, formatAttempt } from './push/sender.js';
 import { wireSessionPush } from './push/wire.js';
 import { ApnsClient, type ApnsKeyConfig, type ApnsTransport } from './push/apns.js';
 import { registerReviewRoutes } from './reviews/routes.js';
@@ -52,6 +52,10 @@ export interface ServerConfig {
     apns?: ApnsKeyConfig;
     /** BI-C3: test seam for the APNs HTTP/2 request. Production uses node:http2. */
     apnsTransport?: ApnsTransport;
+    /** BI-C7: sink for the one-line-per-send-attempt log. Defaults to console —
+     * deliberately NOT app.log, which is disabled unless LOG_REQUESTS=1 (that
+     * routing is how the T-15 push loss stayed invisible). */
+    pushLog?: (line: string) => void;
     /** MC-R1 review surface — rides the sessions store/runner/token, so it only
      * exists as an extension of the coding surface. Absent ⇒ routes not mounted. */
     reviews?: {
@@ -147,8 +151,14 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       config.sessions.apns !== undefined
         ? new ApnsClient(config.sessions.apns, config.sessions.apnsTransport)
         : undefined;
+    const pushLog =
+      config.sessions.pushLog ??
+      ((line: string): void => {
+        console.log(`${new Date().toISOString()} ${line}`);
+      });
     const pushSender = new PushSender({
       tokens: pushTokens,
+      onAttempt: (attempt) => pushLog(formatAttempt(attempt)),
       onError: (err) => app.log.error({ err }, 'session push failed'),
       ...(apnsClient !== undefined ? { client: apnsClient } : {}),
     });
@@ -161,6 +171,7 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       models: config.sessions.models,
       efforts: config.sessions.efforts,
       pushTokens,
+      pushConfigured: apnsClient !== undefined,
       // BI-C6: prompt dictation reuses the capture flow's WHISPER_CMD.
       ...(config.whisperCmd !== undefined ? { whisperCmd: config.whisperCmd } : {}),
     });

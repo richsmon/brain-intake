@@ -28,6 +28,8 @@ export interface ApnsKeyConfig {
 export interface ApnsResponse {
   status: number;
   body: string;
+  /** `apns-id` response header — Apple's delivery id, quotable at their support. */
+  apnsId?: string;
 }
 
 /** Test seam: one APNs HTTP/2 request. Default implementation below. */
@@ -38,28 +40,64 @@ export type ApnsTransport = (
   body: string,
 ) => Promise<ApnsResponse>;
 
-/** Default transport: single HTTP/2 request per call, connection closed after. */
-export const http2Transport: ApnsTransport = (endpoint, path, headers, body) =>
-  new Promise((resolve, reject) => {
-    const session = connect(endpoint);
-    session.on('error', reject);
-    const req = session.request({ ':method': 'POST', ':path': path, ...headers });
-    let status = 0;
-    const chunks: Buffer[] = [];
-    req.on('response', (h) => {
-      status = Number(h[':status'] ?? 0);
+/** APNs answers in well under a second; anything past this is a dead connection. */
+export const APNS_TIMEOUT_MS = 10_000;
+
+/**
+ * Default transport factory: single HTTP/2 request per call, connection closed
+ * after. BI-C7: the promise SETTLES on every outcome — the original version
+ * had no timeout (a stalled connection pended forever, so a send could vanish
+ * with zero trace) and resolved `{status: 0}` when the peer closed the stream
+ * before responding. Now: timeout ⇒ reject, close-without-response ⇒ reject,
+ * and a settled promise never re-settles.
+ */
+export function makeHttp2Transport(timeoutMs: number = APNS_TIMEOUT_MS): ApnsTransport {
+  return (endpoint, path, headers, body) =>
+    new Promise((resolve, reject) => {
+      const session = connect(endpoint);
+      let settled = false;
+      const settle = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+        session.close();
+      };
+      const fail = (err: Error): void => settle(() => reject(err));
+      const timer = setTimeout(() => {
+        fail(new Error(`APNs request timed out after ${timeoutMs}ms`));
+        session.destroy();
+      }, timeoutMs);
+      timer.unref(); // a pending push must never keep the process alive
+      session.on('error', fail);
+      const req = session.request({ ':method': 'POST', ':path': path, ...headers });
+      let status = 0;
+      let apnsId: string | undefined;
+      const chunks: Buffer[] = [];
+      req.on('response', (h) => {
+        status = Number(h[':status'] ?? 0);
+        if (typeof h['apns-id'] === 'string') apnsId = h['apns-id'];
+      });
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('error', fail);
+      req.on('end', () => {
+        if (status === 0) return; // stream ended with no response — 'close' rejects
+        settle(() =>
+          resolve({
+            status,
+            body: Buffer.concat(chunks).toString('utf-8'),
+            ...(apnsId !== undefined ? { apnsId } : {}),
+          }),
+        );
+      });
+      req.on('close', () => {
+        fail(new Error(`APNs stream closed without a response (rstCode ${req.rstCode})`));
+      });
+      req.end(body);
     });
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('error', (err) => {
-      session.close();
-      reject(err);
-    });
-    req.on('end', () => {
-      session.close();
-      resolve({ status, body: Buffer.concat(chunks).toString('utf-8') });
-    });
-    req.end(body);
-  });
+}
+
+export const http2Transport: ApnsTransport = makeHttp2Transport();
 
 /** Apple requires provider tokens between 20 and 60 minutes old — refresh at 45. */
 const JWT_MAX_AGE_MS = 45 * 60_000;
