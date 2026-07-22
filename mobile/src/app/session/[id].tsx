@@ -11,6 +11,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -29,10 +30,12 @@ import {
   FINDING_SEVERITIES,
   formatUsageLine,
   isTerminal,
+  parseBrainPrUrl,
   parseFindingsPayload,
   parseUsage,
   PERMISSION_MODES,
   startEventsPoll,
+  stripBrainPrLine,
   stripFindingsBlock,
   type FindingSeverity,
   type PermissionMode,
@@ -68,6 +71,9 @@ type Item =
       totalCostUsd?: number;
       /** MC-R4: structured review findings the server parsed off the final message. */
       findings?: ReviewFindings;
+      /** MC-R6: the brain PR a full review opened, parsed from the summary's
+       * `Brain PR: <url>` line — the founder taps it to go merge. */
+      brainPrUrl?: string;
     };
 
 interface Derived {
@@ -169,13 +175,19 @@ export function deriveSession(events: SessionEvent[]): Derived {
         // from the summary; findings null/absent ⇒ summary shows untouched.
         const findings = parseFindingsPayload(e.findings);
         const rawSummary = typeof e.summary === "string" ? e.summary : null;
-        const summary = rawSummary !== null && findings !== null ? stripFindingsBlock(rawSummary) : rawSummary;
+        let summary = rawSummary !== null && findings !== null ? stripFindingsBlock(rawSummary) : rawSummary;
+        // MC-R6: full reviews put a `Brain PR: <url>` line in the summary —
+        // surface it as a tappable link; the line leaves the prose only once
+        // it parsed (unparseable stays visible as raw text).
+        const brainPrUrl = rawSummary !== null ? parseBrainPrUrl(rawSummary) : null;
+        if (summary !== null && brainPrUrl !== null) summary = stripBrainPrLine(summary);
         items.push({
           type: "result",
           key,
           outcome: str(e.outcome),
           ...(summary !== null && summary !== "" ? { summary } : {}),
           ...(findings !== null ? { findings } : {}),
+          ...(brainPrUrl !== null ? { brainPrUrl } : {}),
           ...(usage !== null ? { usage } : {}),
           ...(typeof e.total_cost_usd === "number" ? { totalCostUsd: e.total_cost_usd } : {}),
         });
@@ -446,6 +458,21 @@ export default function SessionDetailScreen() {
                   <Text style={[styles.mono, { color: item.outcome === "success" ? colors.stateBecame : colors.danger }]}>
                     {item.outcome === "success" ? "✦ done" : "✕ error"}
                   </Text>
+                  {/* MC-R6: the brain PR is THE next action after a full
+                      review (the founder merges it) — link it right under
+                      the outcome line. */}
+                  {item.brainPrUrl !== undefined ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      accessibilityLabel="Open brain PR"
+                      onPress={() => void Linking.openURL(item.brainPrUrl!)}
+                      hitSlop={8}
+                    >
+                      <Text style={[styles.mono, { color: colors.accent }]}>
+                        Brain PR → {item.brainPrUrl}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   {/* MC-R4: structured review findings render first — the
                       verdict and the cards ARE the review; the prose summary
                       (block already stripped) follows underneath. */}

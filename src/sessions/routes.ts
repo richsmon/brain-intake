@@ -15,7 +15,17 @@ import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 import { makeUsageSummary, type UsageSummary } from './usage.js';
 
 export interface SessionRunnerLike {
-  run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: SessionPermissionMode }): Promise<void>;
+  run(
+    id: string,
+    meta: SessionMeta,
+    opts?: {
+      model?: string;
+      effort?: string;
+      permissionMode?: SessionPermissionMode;
+      /** MC-R6: session-scoped bash-allowlist extension (full reviews only). */
+      extraBashAllowlist?: string[];
+    },
+  ): Promise<void>;
   approve(id: string, requestId: string): boolean;
   deny(id: string, requestId: string, message?: string): boolean;
   setMode(id: string, mode: SessionPermissionMode): Promise<boolean>;

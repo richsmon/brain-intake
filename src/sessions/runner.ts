@@ -75,6 +75,10 @@ export interface StartOptions {
   model?: string;
   effort?: string;
   permissionMode?: SessionPermissionMode;
+  /** MC-R6: extra bash-allowlist prefixes for THIS session only (full-review
+   * orchestration pins them to one worktree + one PR). Merged on top of the
+   * runner-wide allowlist; never leaks into other sessions. */
+  extraBashAllowlist?: string[];
 }
 
 /** Our permission vocabulary — NOT the SDK's (see sdkPermissionMode below). */
@@ -120,14 +124,17 @@ export function shouldGate(
 
 class RunController {
   mode: Mode;
+  /** MC-R6: per-session allowlist — runner-wide entries plus any session-scoped extension. */
+  readonly bashAllowlist: string[];
   readonly pending = new Map<string, Pending>();
   query?: SessionSdkQuery;
   private readonly queue: SessionUserMessage[] = [];
   private readonly waiters: Array<(r: IteratorResult<SessionUserMessage>) => void> = [];
   private closed = false;
 
-  constructor(mode: Mode, initialPrompt: string) {
+  constructor(mode: Mode, initialPrompt: string, bashAllowlist: string[]) {
     this.mode = mode;
+    this.bashAllowlist = bashAllowlist;
     this.queue.push({ type: 'user', message: { role: 'user', content: initialPrompt } });
   }
 
@@ -184,7 +191,10 @@ export class SessionRunner {
   async run(id: string, meta: SessionMeta, opts: StartOptions = {}): Promise<void> {
     const { store } = this.cfg;
     const mode: Mode = opts.permissionMode ?? (meta.permissionMode as Mode) ?? 'gated';
-    const controller = new RunController(mode, meta.prompt);
+    const controller = new RunController(mode, meta.prompt, [
+      ...this.cfg.bashAllowlist,
+      ...(opts.extraBashAllowlist ?? []),
+    ]);
     this.active.set(id, controller);
     store.appendEvent(id, { event: 'status', status: 'running' });
 
@@ -273,7 +283,7 @@ export class SessionRunner {
     const requestId = options.requestId ?? options.toolUseID ?? randomBytes(6).toString('hex');
     store.appendEvent(id, { event: 'tool_call', requestId, toolName, input });
 
-    if (!shouldGate(toolName, input, controller.mode, this.cfg.bashAllowlist)) {
+    if (!shouldGate(toolName, input, controller.mode, controller.bashAllowlist)) {
       return Promise.resolve({ behavior: 'allow' });
     }
 

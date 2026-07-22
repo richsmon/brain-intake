@@ -166,6 +166,30 @@ export function stripFindingsBlock(text: string): string {
   return text.replace(/```findings-json\s*[\s\S]*?```/g, "").trim();
 }
 
+// MC-R6: a full review's brief demands a stable `Brain PR: <url>` line in the
+// final summary — the link to the review-doc PR the founder merges. Model
+// output is untrusted, so both helpers parse defensively.
+
+const BRAIN_PR_LINE = /^\s*Brain PR:\s*<?(https:\/\/github\.com\/[^\s>]+)>?\s*$/im;
+
+/** First `Brain PR:` line's URL, or null when the summary has no usable one. */
+export function parseBrainPrUrl(text: string): string | null {
+  const match = BRAIN_PR_LINE.exec(text);
+  if (!match) return null;
+  // Trailing punctuation is prose, not URL.
+  const url = match[1]!.replace(/[).,;\]]+$/, "");
+  return url.length > "https://github.com/".length ? url : null;
+}
+
+/**
+ * Drop the `Brain PR:` line from a summary shown to the human — the done
+ * card's dedicated link renders it. Only called once the URL actually parsed;
+ * an unparseable line stays visible as raw text (better weird than hidden).
+ */
+export function stripBrainPrLine(text: string): string {
+  return text.replace(BRAIN_PR_LINE, "").trim();
+}
+
 /** MC-R4: per-severity counts as `/reviews/prs` serves them on lastReview. */
 export interface SeverityCounts {
   high: number;
@@ -206,6 +230,10 @@ export interface ReviewPr {
   additions: number;
   deletions: number;
   lastReview?: ReviewLastReview | null;
+  /** MC-R6: true on org rows — launching runs the FULL flow (worktree, review
+   * doc as a brain PR, verdict-conditional PR feedback) instead of the
+   * read-only quick look. Optional so pre-MC-R6 servers parse as quick look. */
+  fullReview?: boolean;
 }
 
 /** MC-R3: "reviewed 2h ago · done" — the PR row's memory line. MC-R4: once

@@ -193,6 +193,39 @@ describe('runner — happy path (no gates)', () => {
   });
 });
 
+describe('runner — session-scoped allowlist extension (MC-R6)', () => {
+  test('extraBashAllowlist extends THIS run only; other sessions still gate', async () => {
+    const store = tmpStore();
+    const scoped = 'git -C /wt/review-1 commit';
+
+    // Session WITH the extension: the scoped command passes without a gate.
+    const idExtended = store.createSession({ ...META, permissionMode: 'acceptEdits' });
+    const first = fakeSdk(async ({ canUseTool, emit }) => {
+      const r = await canUseTool('Bash', { command: `${scoped} -m "review doc"` }, {});
+      expect(r.behavior).toBe('allow');
+      emit(ok());
+    });
+    const runner = new SessionRunner({ store, sdk: first.sdk, bashAllowlist: ['git status'], approvalTimeoutMs: 50 });
+    await runner.run(idExtended, { ...META, permissionMode: 'acceptEdits' }, {
+      permissionMode: 'acceptEdits',
+      extraBashAllowlist: [scoped],
+    });
+    expect(store.readEvents(idExtended).some((e) => e.event === 'permission_request')).toBe(false);
+    expect(store.listSessions().find((s) => s.id === idExtended)!.state).toBe('done');
+
+    // Session WITHOUT it: the same command gates (times out → deny + paused).
+    const idPlain = store.createSession({ ...META, permissionMode: 'acceptEdits' });
+    const second = fakeSdk(async ({ canUseTool, emit }) => {
+      const r = await canUseTool('Bash', { command: `${scoped} -m "review doc"` }, {});
+      expect(r.behavior).toBe('deny');
+      emit(ok());
+    });
+    const runner2 = new SessionRunner({ store, sdk: second.sdk, bashAllowlist: ['git status'], approvalTimeoutMs: 50 });
+    await runner2.run(idPlain, { ...META, permissionMode: 'acceptEdits' }, { permissionMode: 'acceptEdits' });
+    expect(store.readEvents(idPlain).some((e) => e.event === 'permission_request')).toBe(true);
+  });
+});
+
 describe('runner — auto mode (BI-C4)', () => {
   test('edits and non-allowlisted Bash run straight through: no permission_request, no waiting', async () => {
     const store = tmpStore();

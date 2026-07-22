@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { makeIntakeTrigger } from './intake-trigger.js';
 import { buildServer } from './server.js';
 import { createRealGhRunner } from './reviews/gh.js';
+import { createRealGitRunner } from './reviews/worktree.js';
 import { createRealSdk } from './sessions/sdk.js';
 import type { ApnsKeyConfig } from './push/apns.js';
 
@@ -49,6 +50,7 @@ const app = buildServer({
             ownUser: config.reviewsOwnUser,
             ownRoot: config.reviewsOwnRoot,
             gh: createRealGhRunner(),
+            git: createRealGitRunner(),
           },
         },
       }
