@@ -22,6 +22,21 @@ jest.mock("expo-router", () => {
 const mockCreate = jest.fn(async () => ({ id: "2026-07-22-new1" }));
 const mockTranscribe = jest.fn(async () => ({ text: "dictated words" }));
 
+// BI-C8: local-runs usage totals behind the Coding tab's usage card.
+const usageTotals = (runs: number, input: number, output: number, cost: number) => ({
+  runs,
+  input_tokens: input,
+  output_tokens: output,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+  total_cost_usd: cost,
+});
+const mockUsageSummary = jest.fn(async () => ({
+  today: usageTotals(2, 12_000, 345, 0.43),
+  last7d: usageTotals(9, 2_000_000, 400_000, 12.5),
+  thisMonth: usageTotals(21, 8_000_000, 950, 40),
+}));
+
 // BI-C6: the sheet embeds DictationButton, which records via expo-audio.
 const mockRecorder = {
   record: jest.fn(),
@@ -74,6 +89,7 @@ const mockFakeApi = {
   }),
   create: mockCreate,
   transcribe: mockTranscribe,
+  usageSummary: mockUsageSummary,
 };
 
 jest.mock("../src/lib/brain", () => ({
@@ -95,6 +111,7 @@ describe("CodingScreen", () => {
     mockPush.mockClear();
     mockCreate.mockClear();
     mockTranscribe.mockClear();
+    mockUsageSummary.mockClear();
     getSessionsApiMock.mockResolvedValue(mockFakeApi);
   });
 
@@ -110,6 +127,26 @@ describe("CodingScreen", () => {
       pathname: "/session/[id]",
       params: { id: "2026-07-22-aaaa1111" },
     });
+  });
+
+  it("renders the local-runs usage card above the list (BI-C8)", async () => {
+    await renderCoding();
+    expect(await screen.findByText("local runs · not plan limits")).toBeOnTheScreen();
+    expect(screen.getByText("today")).toBeOnTheScreen();
+    expect(screen.getByText("7 days")).toBeOnTheScreen();
+    expect(screen.getByText("month")).toBeOnTheScreen();
+    expect(screen.getByText("12.3k tok")).toBeOnTheScreen();
+    expect(screen.getByText("$0.43")).toBeOnTheScreen();
+    expect(screen.getByText("$12.50")).toBeOnTheScreen();
+    // The session list still renders below the card.
+    expect(screen.getByText("fix the login flow")).toBeOnTheScreen();
+  });
+
+  it("hides the usage card when the server has no /usage/summary (BI-C8)", async () => {
+    mockUsageSummary.mockRejectedValueOnce(new ApiError("http", 404));
+    await renderCoding();
+    expect(await screen.findByText("fix the login flow")).toBeOnTheScreen();
+    expect(screen.queryByText("local runs · not plan limits")).toBeNull();
   });
 
   it("explains the missing token instead of showing a broken list", async () => {

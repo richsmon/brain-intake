@@ -23,6 +23,7 @@ import { DictationButton } from "../../components/ds/dictation-button";
 import { EmptyState } from "../../components/ds/empty-state";
 import { ScreenHeader } from "../../components/ds/screen-header";
 import { SessionStateChip } from "../../components/ds/session-state-chip";
+import { UsageCard } from "../../components/ds/usage-card";
 import { getSessionsApi } from "../../lib/brain";
 import {
   PERMISSION_MODES,
@@ -30,6 +31,7 @@ import {
   type PermissionMode,
   type SessionSummary,
   type SessionsMeta,
+  type UsageSummary,
 } from "../../lib/sessions";
 import { useTheme } from "../../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
@@ -220,6 +222,9 @@ export default function CodingScreen() {
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [meta, setMeta] = useState<SessionsMeta>(FALLBACK_META);
+  // BI-C8: local-runs usage card. Null until the endpoint answers — the card
+  // simply stays hidden against older servers or while offline.
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [hasToken, setHasToken] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -232,9 +237,17 @@ export default function CodingScreen() {
     }
     setHasToken(true);
     try {
-      const [list, serverMeta] = await Promise.all([api.list(), api.meta().catch(() => null)]);
+      const [list, serverMeta, usageSummary] = await Promise.all([
+        api.list(),
+        api.meta().catch(() => null),
+        // Wrapped so a server without /usage/summary just hides the card.
+        Promise.resolve()
+          .then(() => api.usageSummary())
+          .catch(() => null),
+      ]);
       setSessions([...list].reverse()); // newest first — ids sort by date
       if (serverMeta) setMeta(serverMeta);
+      if (usageSummary) setUsage(usageSummary);
     } catch {
       // Offline — keep whatever we showed last.
     }
@@ -315,6 +328,13 @@ export default function CodingScreen() {
             </Pressable>
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
+          ListHeaderComponent={
+            usage !== null ? (
+              <View style={styles.usageWrap}>
+                <UsageCard summary={usage} />
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <EmptyState text="No sessions yet. Start one and watch the agent work from here." />
           }
@@ -350,6 +370,11 @@ const styles = StyleSheet.create({
   newButtonLabel: {
     fontSize: typeScale.bodySm,
     fontWeight: "600",
+  },
+  usageWrap: {
+    paddingHorizontal: spacing.s4,
+    paddingTop: spacing.s3,
+    paddingBottom: spacing.s2,
   },
   row: {
     paddingHorizontal: spacing.s4,

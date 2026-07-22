@@ -11,6 +11,7 @@ import type { PushTokenStore } from '../push/tokens.js';
 import { AUDIO_EXTS, transcribeAudio, type TranscribeDeps } from '../transcribe.js';
 import type { SessionPermissionMode } from './runner.js';
 import { sessionState, type SessionMeta, type SessionStore } from './store.js';
+import { makeUsageSummary, type UsageSummary } from './usage.js';
 
 export interface SessionRunnerLike {
   run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: SessionPermissionMode }): Promise<void>;
@@ -37,6 +38,9 @@ export interface SessionRoutesConfig {
   whisperCmd?: string;
   /** Test seam for the whisper shell-out. */
   transcribeDeps?: TranscribeDeps;
+  /** BI-C8: test seam for `GET /usage/summary`. Defaults to a 30 s-cached scan
+   * of the store's sessionsDir. */
+  usageSummary?: () => UsageSummary;
 }
 
 interface PostSessionBody {
@@ -52,6 +56,8 @@ const MODES = new Set<string>(['gated', 'acceptEdits', 'auto'] satisfies Session
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
   const { store, runner, repoAllowlist, token, models, efforts, pushTokens, pushConfigured, whisperCmd, transcribeDeps } =
     config;
+  // BI-C8: usage totals scan the store's own dir — the JSONLs ARE the ledger.
+  const usageSummary = config.usageSummary ?? makeUsageSummary(store.dir);
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -149,6 +155,10 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    // BI-C8: local-runs usage totals (today / last 7 days / this month) from
+    // the sessionsDir JSONLs. Local runs only — NOT subscription limits.
+    scoped.get('/usage/summary', async () => usageSummary());
 
     // BI-C2: single source for the app's pickers — repos, models, efforts from config.
     scoped.get('/sessions/meta', async () => ({

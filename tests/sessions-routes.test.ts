@@ -234,6 +234,53 @@ describe('GET /sessions/meta (BI-C2)', () => {
   });
 });
 
+describe('GET /usage/summary (BI-C8 local usage totals)', () => {
+  test('totals runs, tokens and cost across the store dir — last result per session', async () => {
+    const { app, store } = build();
+    const usage = {
+      input_tokens: 100,
+      output_tokens: 40,
+      cache_creation_input_tokens: 10,
+      cache_read_input_tokens: 1000,
+    };
+    const meta = { repo: 'gotam', repoPath: '/x', prompt: 'p', model: 'm', permissionMode: 'gated' };
+    const a = store.createSession(meta);
+    store.appendEvent(a, { event: 'result', outcome: 'success', usage, total_cost_usd: 0.25 });
+    const b = store.createSession(meta);
+    store.appendEvent(b, { event: 'result', outcome: 'success', usage, total_cost_usd: 0.5 });
+    // Second result is session-cumulative — it replaces b's first, not adds.
+    store.appendEvent(b, {
+      event: 'result',
+      outcome: 'success',
+      usage: { ...usage, input_tokens: 300 },
+      total_cost_usd: 0.75,
+    });
+    // Still running, no result yet — not a run.
+    store.createSession(meta);
+
+    const res = await app.inject({ method: 'GET', url: '/usage/summary', headers: AUTH });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // Fresh sessions are day-prefixed with today's UTC date, so all three
+    // periods carry the same totals.
+    for (const period of ['today', 'last7d', 'thisMonth']) {
+      expect(body[period]).toEqual({
+        runs: 2,
+        input_tokens: 400,
+        output_tokens: 80,
+        cache_creation_input_tokens: 20,
+        cache_read_input_tokens: 2000,
+        total_cost_usd: 1,
+      });
+    }
+  });
+
+  test('requires the bearer token like every sessions route', async () => {
+    const { app } = build();
+    expect((await app.inject({ method: 'GET', url: '/usage/summary' })).statusCode).toBe(401);
+  });
+});
+
 describe('GET /sessions/:id/events.json (BI-C2 poll snapshot)', () => {
   test('unknown id ⇒ 404; missing token ⇒ 401', async () => {
     const { app } = build();

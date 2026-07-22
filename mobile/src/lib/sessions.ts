@@ -67,6 +67,22 @@ export interface SessionSummary {
   total_cost_usd?: number;
 }
 
+/**
+ * BI-C8: per-period totals from `GET /usage/summary`. Local runs through the
+ * mini only — NOT subscription limits. Token fields keep the SessionUsage
+ * snake_case shape so nothing along the chain ever re-maps.
+ */
+export interface UsagePeriodTotals extends SessionUsage {
+  runs: number;
+  total_cost_usd: number;
+}
+
+export interface UsageSummary {
+  today: UsagePeriodTotals;
+  last7d: UsagePeriodTotals;
+  thisMonth: UsagePeriodTotals;
+}
+
 export interface EventsPage {
   events: SessionEvent[];
   nextOffset: number;
@@ -250,6 +266,11 @@ export function makeSessionsApi(baseUrl: string, token: string, fetchImpl: typeo
 
     meta(): Promise<SessionsMeta> {
       return request<SessionsMeta>("/sessions/meta");
+    },
+
+    // BI-C8: local-runs usage totals for the Coding tab card.
+    usageSummary(): Promise<UsageSummary> {
+      return request<UsageSummary>("/usage/summary");
     },
 
     events(id: string, offset = 0): Promise<EventsPage> {
