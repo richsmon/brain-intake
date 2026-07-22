@@ -34,6 +34,16 @@ describe('http2Transport settles on every outcome (BI-C7 silent-loss fix)', () =
     expect(res.body).toBe('{"reason":"BadDeviceToken"}');
   });
 
+  test('captures the apns-id response header for the per-send log line (T-22)', async () => {
+    const endpoint = await listen((stream) => {
+      stream.respond({ ':status': 200, 'apns-id': 'A1B2C3D4-E5F6' });
+      stream.end();
+    });
+    const res = await makeHttp2Transport()(endpoint, '/3/device/x', {}, '{}');
+    expect(res.status).toBe(200);
+    expect(res.apnsId).toBe('A1B2C3D4-E5F6');
+  });
+
   test('rejects (never resolves status 0) when the peer closes the stream without a response', async () => {
     const endpoint = await listen((stream) => {
       stream.close(0); // NO_ERROR — the exact shape that used to resolve {status: 0}

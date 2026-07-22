@@ -28,6 +28,8 @@ export interface ApnsKeyConfig {
 export interface ApnsResponse {
   status: number;
   body: string;
+  /** `apns-id` response header — Apple's delivery id, quotable at their support. */
+  apnsId?: string;
 }
 
 /** Test seam: one APNs HTTP/2 request. Default implementation below. */
@@ -70,15 +72,23 @@ export function makeHttp2Transport(timeoutMs: number = APNS_TIMEOUT_MS): ApnsTra
       session.on('error', fail);
       const req = session.request({ ':method': 'POST', ':path': path, ...headers });
       let status = 0;
+      let apnsId: string | undefined;
       const chunks: Buffer[] = [];
       req.on('response', (h) => {
         status = Number(h[':status'] ?? 0);
+        if (typeof h['apns-id'] === 'string') apnsId = h['apns-id'];
       });
       req.on('data', (c: Buffer) => chunks.push(c));
       req.on('error', fail);
       req.on('end', () => {
         if (status === 0) return; // stream ended with no response — 'close' rejects
-        settle(() => resolve({ status, body: Buffer.concat(chunks).toString('utf-8') }));
+        settle(() =>
+          resolve({
+            status,
+            body: Buffer.concat(chunks).toString('utf-8'),
+            ...(apnsId !== undefined ? { apnsId } : {}),
+          }),
+        );
       });
       req.on('close', () => {
         fail(new Error(`APNs stream closed without a response (rstCode ${req.rstCode})`));

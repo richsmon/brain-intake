@@ -30,6 +30,8 @@ export interface SessionRoutesConfig {
   efforts: string[];
   /** BI-C3: device push-token registry behind `POST /push/register`. Absent ⇒ route not mounted. */
   pushTokens?: PushTokenStore;
+  /** BI-C7: whether an APNs client is wired — surfaced by `GET /push/status`. */
+  pushConfigured?: boolean;
   /** BI-C6: dictation for prompt inputs — same WHISPER_CMD as the capture flow.
    * Unset ⇒ `POST /sessions/transcribe` answers 503 and the app falls back to typing. */
   whisperCmd?: string;
@@ -48,7 +50,8 @@ interface PostSessionBody {
 const MODES = new Set<string>(['gated', 'acceptEdits', 'auto'] satisfies SessionPermissionMode[]);
 
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
-  const { store, runner, repoAllowlist, token, models, efforts, pushTokens, whisperCmd, transcribeDeps } = config;
+  const { store, runner, repoAllowlist, token, models, efforts, pushTokens, pushConfigured, whisperCmd, transcribeDeps } =
+    config;
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -105,6 +108,16 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
         const added = pushTokens.register(pushToken);
         return reply.code(added ? 201 : 200).send({ ok: true });
       });
+
+      // BI-C7: delivery observability — per-token lastSend outcome, so "did the
+      // push actually go out?" is answerable from the phone or a curl.
+      scoped.get('/push/status', async () => ({
+        configured: pushConfigured ?? false,
+        tokens: pushTokens.entries().map((e) => ({
+          suffix: e.token.slice(-8),
+          ...(e.lastSend !== undefined ? { lastSend: e.lastSend } : {}),
+        })),
+      }));
     }
 
     // BI-C6: synchronous dictation — audio in, transcript out, nothing stored.
