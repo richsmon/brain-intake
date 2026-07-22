@@ -1,8 +1,7 @@
-// Coding (BI-C2) — the control layer over coding agents on the mini: the
-// session list (live states) and the New Session sheet (repo → prompt → model
-// → effort → mode). Prompt input is text-only in this slice: the capture voice
-// component records audio for server-side transcription and doesn't drop into
-// a TextInput flow trivially.
+// Reviews (MC-R1) — the MC review surface: open PRs across the market-clue
+// org, tap one, pick model + effort, launch. The server runs the review as a
+// normal gated coding session, so "Launch review" drops straight into the
+// existing session detail. Reached from the Coding tab's header.
 
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -15,17 +14,15 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
-import { EmptyState } from "../../components/ds/empty-state";
-import { ScreenHeader } from "../../components/ds/screen-header";
-import { SessionStateChip } from "../../components/ds/session-state-chip";
-import { getSessionsApi } from "../../lib/brain";
-import type { PermissionMode, SessionSummary, SessionsMeta } from "../../lib/sessions";
-import { useTheme } from "../../theme";
-import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
+import { EmptyState } from "../components/ds/empty-state";
+import { ApiError } from "../lib/api";
+import { getSessionsApi } from "../lib/brain";
+import { formatAge, type ReviewPr, type SessionsMeta } from "../lib/sessions";
+import { useTheme } from "../theme";
+import { fonts, labelTracking, radii, spacing, typeScale } from "../theme/tokens";
 
 // Sensible fallbacks only — the server's /sessions/meta is the real source.
 const FALLBACK_META: SessionsMeta = {
@@ -84,77 +81,68 @@ function PickerRow<T extends string>({
   );
 }
 
-function NewSessionSheet({
-  visible,
+function LaunchSheet({
+  pr,
   meta,
   onClose,
-  onCreated,
+  onLaunched,
 }: {
-  visible: boolean;
+  pr: ReviewPr | null;
   meta: SessionsMeta;
   onClose: () => void;
-  onCreated: (id: string) => void;
+  onLaunched: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
-  const [repo, setRepo] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<string | null>(meta.models[0]?.id ?? null);
   const [effort, setEffort] = useState<string | null>(null);
-  const [mode, setMode] = useState<PermissionMode>("gated");
-  const [starting, setStarting] = useState(false);
+  const [launching, setLaunching] = useState(false);
 
-  const ready = repo !== null && model !== null && prompt.trim().length > 0 && !starting;
+  const ready = pr !== null && model !== null && !launching;
 
-  async function start() {
-    if (!ready || repo === null || model === null) return;
-    setStarting(true);
+  async function launch() {
+    if (!ready || pr === null || model === null) return;
+    setLaunching(true);
     try {
       const api = await getSessionsApi();
       if (!api) throw new Error("no token");
-      const { id } = await api.create({
-        repo,
-        prompt: prompt.trim(),
+      const { sessionId } = await api.launchReview({
+        repo: pr.repo,
+        pr: pr.number,
         model,
-        permissionMode: mode,
         ...(effort !== null ? { effort } : {}),
       });
-      setPrompt("");
-      setStarting(false);
-      onCreated(id);
-    } catch {
-      setStarting(false);
-      Alert.alert("Session didn't start", "Check the tailnet and the sessions token.");
+      setLaunching(false);
+      onLaunched(sessionId);
+    } catch (err) {
+      setLaunching(false);
+      if (err instanceof ApiError && err.status === 409) {
+        Alert.alert("No local checkout", `The host has no checkout of ${pr.repo}. Clone it there first.`);
+      } else {
+        Alert.alert("Review didn't start", "Check the tailnet and the sessions token.");
+      }
     }
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={pr !== null} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.sheetBackdrop}>
         <View style={[styles.sheet, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}>
           <ScrollView contentContainerStyle={styles.sheetContent}>
             <View style={styles.sheetHead}>
-              <Text style={[styles.sheetTitle, { color: colors.ink1 }]}>New Session</Text>
+              <Text style={[styles.sheetTitle, { color: colors.ink1 }]}>Launch Review</Text>
               <Pressable accessibilityRole="button" onPress={onClose} hitSlop={12}>
                 <Text style={[styles.sheetClose, { color: colors.ink3 }]}>Close</Text>
               </Pressable>
             </View>
 
-            <PickerRow label="Repo" options={meta.repos} selected={repo} onSelect={setRepo} />
-
-            <View style={styles.pickerBlock}>
-              <Text style={[styles.fieldLabel, { color: colors.ink3 }]}>Prompt</Text>
-              <TextInput
-                value={prompt}
-                onChangeText={setPrompt}
-                multiline
-                placeholder="What should the agent do?"
-                placeholderTextColor={colors.ink3}
-                style={[
-                  styles.promptInput,
-                  { borderColor: colors.line, backgroundColor: colors.bgSurface2, color: colors.ink1 },
-                ]}
-              />
-            </View>
+            {pr !== null ? (
+              <View style={styles.prSummary}>
+                <Text style={[styles.rowMono, { color: colors.ink3 }]}>
+                  {pr.repo} #{pr.number} · {pr.branch}
+                </Text>
+                <Text style={[styles.rowTitle, { color: colors.ink1 }]}>{pr.title}</Text>
+              </View>
+            ) : null}
 
             <PickerRow
               label="Model"
@@ -166,27 +154,19 @@ function NewSessionSheet({
 
             <PickerRow label="Effort" options={meta.efforts} selected={effort} onSelect={setEffort} />
 
-            <PickerRow
-              label="Mode"
-              options={["gated", "acceptEdits"] as PermissionMode[]}
-              selected={mode}
-              labelFor={(m) => (m === "gated" ? "gated (approve edits)" : "acceptEdits")}
-              onSelect={setMode}
-            />
-
             <Pressable
               accessibilityRole="button"
               disabled={!ready}
-              onPress={() => void start()}
+              onPress={() => void launch()}
               style={({ pressed }) => [
-                styles.start,
+                styles.launch,
                 {
                   backgroundColor: !ready ? colors.bgSurface2 : pressed ? colors.accentStrong : colors.accent,
                 },
               ]}
             >
-              <Text style={[styles.startLabel, { color: ready ? colors.inkInverse : colors.ink3 }]}>
-                {starting ? "Starting…" : "Start session"}
+              <Text style={[styles.launchLabel, { color: ready ? colors.inkInverse : colors.ink3 }]}>
+                {launching ? "Launching…" : "Launch review"}
               </Text>
             </Pressable>
           </ScrollView>
@@ -196,13 +176,14 @@ function NewSessionSheet({
   );
 }
 
-export default function CodingScreen() {
+export default function ReviewsScreen() {
   const { colors } = useTheme();
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [prs, setPrs] = useState<ReviewPr[]>([]);
   const [meta, setMeta] = useState<SessionsMeta>(FALLBACK_META);
   const [hasToken, setHasToken] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [picked, setPicked] = useState<ReviewPr | null>(null);
 
   const load = useCallback(async () => {
     const api = await getSessionsApi();
@@ -212,9 +193,10 @@ export default function CodingScreen() {
     }
     setHasToken(true);
     try {
-      const [list, serverMeta] = await Promise.all([api.list(), api.meta().catch(() => null)]);
-      setSessions([...list].reverse()); // newest first — ids sort by date
+      const [list, serverMeta] = await Promise.all([api.reviewPrs(), api.meta().catch(() => null)]);
+      setPrs(list);
       if (serverMeta) setMeta(serverMeta);
+      setLoaded(true);
     } catch {
       // Offline — keep whatever we showed last.
     }
@@ -234,80 +216,49 @@ export default function CodingScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
-      <ScreenHeader
-        title="Coding"
-        right={
-          hasToken ? (
-            <View style={styles.headerActions}>
-              {/* MC-R1: the review surface lives one push away from the session list. */}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => router.push("/reviews")}
-                style={({ pressed }) => [
-                  styles.newButton,
-                  {
-                    borderWidth: 1,
-                    borderColor: colors.line,
-                    backgroundColor: pressed ? colors.bgSurface2 : colors.bgSurface,
-                  },
-                ]}
-              >
-                <Text style={[styles.newButtonLabel, { color: colors.ink2 }]}>Reviews</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setSheetOpen(true)}
-                style={({ pressed }) => [
-                  styles.newButton,
-                  { backgroundColor: pressed ? colors.accentStrong : colors.accent },
-                ]}
-              >
-                <Text style={[styles.newButtonLabel, { color: colors.inkInverse }]}>+ New</Text>
-              </Pressable>
-            </View>
-          ) : undefined
-        }
-      />
       {!hasToken ? (
-        <EmptyState text="Coding needs the sessions token. Add it in Settings and I'll show the sessions here." />
+        <EmptyState text="Reviews need the sessions token. Add it in Settings and I'll list the open PRs here." />
       ) : (
         <FlatList
-          data={sessions}
-          keyExtractor={(s) => s.id}
+          data={prs}
+          keyExtractor={(pr) => `${pr.repo}#${pr.number}`}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => router.push({ pathname: "/session/[id]", params: { id: item.id } })}
+              onPress={() => setPicked(item)}
               style={({ pressed }) => [
                 styles.row,
                 { borderBottomColor: colors.line },
                 pressed && { backgroundColor: colors.bgSurface2 },
               ]}
             >
-              <Text numberOfLines={2} style={[styles.rowPrompt, { color: colors.ink1 }]}>
-                {item.prompt}
+              <Text style={[styles.rowMono, { color: colors.ink3 }]}>
+                {item.repo} #{item.number}
+              </Text>
+              <Text numberOfLines={2} style={[styles.rowTitle, { color: colors.ink1 }]}>
+                {item.title}
               </Text>
               <View style={styles.rowMeta}>
-                <SessionStateChip state={item.state} />
-                <Text style={[styles.rowMono, { color: colors.ink3 }]}>{item.repo}</Text>
+                <Text style={[styles.rowMono, { color: colors.ink3 }]}>{item.author}</Text>
                 <View style={styles.spacer} />
-                <Text style={[styles.rowMono, { color: colors.ink3 }]}>{item.model}</Text>
+                <Text style={[styles.rowMono, { color: colors.success }]}>+{item.additions}</Text>
+                <Text style={[styles.rowMono, { color: colors.danger }]}>-{item.deletions}</Text>
+                <Text style={[styles.rowMono, { color: colors.ink3 }]}>{formatAge(item.updatedAt)}</Text>
               </View>
             </Pressable>
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
           ListEmptyComponent={
-            <EmptyState text="No sessions yet. Start one and watch the agent work from here." />
+            loaded ? <EmptyState text="No open PRs across market-clue right now." /> : null
           }
         />
       )}
-      <NewSessionSheet
-        visible={sheetOpen}
+      <LaunchSheet
+        pr={picked}
         meta={meta}
-        onClose={() => setSheetOpen(false)}
-        onCreated={(id) => {
-          setSheetOpen(false);
-          void load();
-          router.push({ pathname: "/session/[id]", params: { id } });
+        onClose={() => setPicked(null)}
+        onLaunched={(sessionId) => {
+          setPicked(null);
+          router.push({ pathname: "/session/[id]", params: { id: sessionId } });
         }}
       />
     </View>
@@ -315,29 +266,13 @@ export default function CodingScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.s2,
-  },
-  newButton: {
-    borderRadius: radii.control,
-    paddingHorizontal: spacing.s3,
-    paddingVertical: spacing.s2,
-    minHeight: 36,
-    justifyContent: "center",
-  },
-  newButtonLabel: {
-    fontSize: typeScale.bodySm,
-    fontWeight: "600",
-  },
   row: {
     paddingHorizontal: spacing.s4,
     paddingVertical: spacing.s3,
     gap: spacing.s2,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  rowPrompt: {
+  rowTitle: {
     fontSize: typeScale.body,
     fontWeight: "600",
     lineHeight: typeScale.body * 1.3,
@@ -353,6 +288,9 @@ const styles = StyleSheet.create({
   },
   spacer: {
     flex: 1,
+  },
+  prSummary: {
+    gap: spacing.s2,
   },
   sheetBackdrop: {
     flex: 1,
@@ -408,22 +346,13 @@ const styles = StyleSheet.create({
     fontSize: typeScale.bodySm,
     fontWeight: "600",
   },
-  promptInput: {
-    minHeight: 88,
-    borderWidth: 1,
-    borderRadius: radii.control,
-    padding: spacing.s3,
-    textAlignVertical: "top",
-    fontSize: typeScale.bodySm,
-    lineHeight: typeScale.bodySm * 1.4,
-  },
-  start: {
+  launch: {
     minHeight: spacing.hitMin,
     borderRadius: radii.control,
     alignItems: "center",
     justifyContent: "center",
   },
-  startLabel: {
+  launchLabel: {
     fontSize: typeScale.body,
     fontWeight: "600",
   },
