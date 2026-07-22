@@ -1,20 +1,10 @@
-const mockConstants: { expoConfig: { extra?: Record<string, unknown> } | null } = { expoConfig: null };
 let mockLastResponse: unknown = null;
 const mockRemove = jest.fn();
 let mockResponseHandler: ((response: unknown) => void) | null = null;
 
-jest.mock("expo-constants", () => ({
-  __esModule: true,
-  default: {
-    get expoConfig() {
-      return mockConstants.expoConfig;
-    },
-  },
-}));
-
 jest.mock("expo-notifications", () => ({
   requestPermissionsAsync: jest.fn(async () => ({ granted: true })),
-  getExpoPushTokenAsync: jest.fn(async () => ({ data: "ExponentPushToken[real]" })),
+  getDevicePushTokenAsync: jest.fn(async () => ({ type: "ios", data: "abcdef0123456789" })),
   getLastNotificationResponseAsync: jest.fn(async () => mockLastResponse),
   addNotificationResponseReceivedListener: jest.fn((handler: (response: unknown) => void) => {
     mockResponseHandler = handler;
@@ -34,10 +24,10 @@ jest.mock("../src/lib/brain", () => ({
 }));
 
 import {
-  getEasProjectId,
   pathFromPushUrl,
   registerForSessionPush,
   subscribeToPushResponses,
+  urlFromNotification,
   type PushRegistrationDeps,
 } from "../src/lib/push";
 
@@ -47,9 +37,8 @@ function deps(over: Partial<PushRegistrationDeps> = {}): PushRegistrationDeps & 
     calls,
     getSessionsToken: async () => "sess-tok",
     getBaseUrl: async () => "http://host:8787/",
-    getProjectId: () => "proj-123",
     requestPermission: async () => true,
-    getExpoPushToken: async () => "ExponentPushToken[abc]",
+    getDevicePushToken: async () => "aabbccddeeff0011",
     fetchImpl: (async (...args: unknown[]) => {
       calls.push(args);
       return { ok: true, status: 201, json: async () => ({ ok: true }) };
@@ -58,25 +47,16 @@ function deps(over: Partial<PushRegistrationDeps> = {}): PushRegistrationDeps & 
   };
 }
 
-function pushResponse(url: unknown): unknown {
-  return { notification: { request: { content: { data: { url } } } } };
+function dataResponse(url: unknown): unknown {
+  return { notification: { request: { content: { data: { url } }, trigger: null } } };
 }
 
-describe("getEasProjectId", () => {
-  it("is null until eas init has written extra.eas.projectId", () => {
-    mockConstants.expoConfig = null;
-    expect(getEasProjectId()).toBeNull();
-    mockConstants.expoConfig = { extra: {} };
-    expect(getEasProjectId()).toBeNull();
-    mockConstants.expoConfig = { extra: { eas: { projectId: "" } } };
-    expect(getEasProjectId()).toBeNull();
-    mockConstants.expoConfig = { extra: { eas: { projectId: "11111111-2222-3333-4444-555555555555" } } };
-    expect(getEasProjectId()).toBe("11111111-2222-3333-4444-555555555555");
-  });
-});
+function apnsResponse(payload: Record<string, unknown>): unknown {
+  return { notification: { request: { content: { data: undefined }, trigger: { type: "push", payload } } } };
+}
 
 describe("registerForSessionPush", () => {
-  it("registers the Expo push token with the server behind the sessions bearer", async () => {
+  it("registers the raw APNs device token with the server behind the sessions bearer", async () => {
     const d = deps();
     expect(await registerForSessionPush(d)).toBe("registered");
     expect(d.calls).toHaveLength(1);
@@ -84,7 +64,7 @@ describe("registerForSessionPush", () => {
     expect(url).toBe("http://host:8787/push/register");
     expect(init.method).toBe("POST");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer sess-tok");
-    expect(JSON.parse(init.body as string)).toEqual({ token: "ExponentPushToken[abc]" });
+    expect(JSON.parse(init.body as string)).toEqual({ token: "aabbccddeeff0011" });
   });
 
   it("is a graceful no-op without a sessions token — nothing else is touched", async () => {
@@ -95,26 +75,20 @@ describe("registerForSessionPush", () => {
     expect(d.calls).toHaveLength(0);
   });
 
-  it("is a graceful no-op without an EAS projectId (pre eas-init state)", async () => {
-    const d = deps({ getProjectId: () => null });
-    expect(await registerForSessionPush(d)).toBe("no-project-id");
-    expect(d.calls).toHaveLength(0);
-  });
-
   it("is a graceful no-op when notification permission is denied", async () => {
     const getToken = jest.fn(async () => "x");
-    const d = deps({ requestPermission: async () => false, getExpoPushToken: getToken });
+    const d = deps({ requestPermission: async () => false, getDevicePushToken: getToken });
     expect(await registerForSessionPush(d)).toBe("permission-denied");
     expect(getToken).not.toHaveBeenCalled();
     expect(d.calls).toHaveLength(0);
   });
 
-  it("never throws — token fetch or server errors come back as failed", async () => {
+  it("never throws — device-token errors (e.g. simulator) or server errors come back as failed", async () => {
     expect(
       await registerForSessionPush(
         deps({
-          getExpoPushToken: async () => {
-            throw new Error("no APNs");
+          getDevicePushToken: async () => {
+            throw new Error("no APNs on simulator");
           },
         }),
       ),
@@ -145,6 +119,21 @@ describe("pathFromPushUrl", () => {
   });
 });
 
+describe("urlFromNotification", () => {
+  const URL = "brainer:///session/2026-07-22-abcd1234";
+
+  it("reads content.data.url (expo-notifications mapping of the body key)", () => {
+    expect(urlFromNotification(dataResponse(URL) as never)).toBe(URL);
+  });
+
+  it("falls back to the raw APNs trigger payload — top-level url, then body.url", () => {
+    expect(urlFromNotification(apnsResponse({ url: URL }) as never)).toBe(URL);
+    expect(urlFromNotification(apnsResponse({ body: { url: URL } }) as never)).toBe(URL);
+    expect(urlFromNotification(apnsResponse({ aps: {} }) as never)).toBeNull();
+    expect(urlFromNotification(null)).toBeNull();
+  });
+});
+
 describe("subscribeToPushResponses", () => {
   beforeEach(() => {
     mockLastResponse = null;
@@ -158,12 +147,16 @@ describe("subscribeToPushResponses", () => {
     await Promise.resolve(); // let the cold-start check settle (null → no route)
     expect(navigate).not.toHaveBeenCalled();
 
-    mockResponseHandler!(pushResponse("brainer:///session/2026-07-22-abcd1234"));
+    mockResponseHandler!(dataResponse("brainer:///session/2026-07-22-abcd1234"));
     expect(navigate).toHaveBeenCalledWith("/session/2026-07-22-abcd1234");
 
     navigate.mockClear();
-    mockResponseHandler!(pushResponse("brainer:///somewhere/else"));
-    mockResponseHandler!({ notification: { request: { content: { data: undefined } } } });
+    mockResponseHandler!(apnsResponse({ url: "brainer:///session/2026-07-22-eeee1111" }));
+    expect(navigate).toHaveBeenCalledWith("/session/2026-07-22-eeee1111");
+
+    navigate.mockClear();
+    mockResponseHandler!(dataResponse("brainer:///somewhere/else"));
+    mockResponseHandler!({ notification: { request: { content: { data: undefined }, trigger: null } } });
     expect(navigate).not.toHaveBeenCalled();
 
     unsubscribe();
@@ -171,7 +164,7 @@ describe("subscribeToPushResponses", () => {
   });
 
   it("replays the response that cold-started the app", async () => {
-    mockLastResponse = pushResponse("brainer:///session/2026-07-22-ffff0000");
+    mockLastResponse = apnsResponse({ url: "brainer:///session/2026-07-22-ffff0000" });
     const navigate = jest.fn();
     subscribeToPushResponses(navigate);
     await Promise.resolve();

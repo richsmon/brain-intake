@@ -1,18 +1,22 @@
-// BI-C3: Expo push registration + notification deeplink routing.
+// BI-C3 (direct APNs): push registration + notification deeplink routing.
 //
-// Registration is a graceful no-op unless the whole chain is available:
-// sessions token configured (server mounts /push/register behind the same
-// bearer guard as /sessions/*), an EAS projectId in app config
-// (`extra.eas.projectId` — requires the one-time `eas init`), and notification
-// permission granted. Every early-out is a typed status so callers and tests
-// can see exactly why nothing was registered.
+// The server delivers straight to APNs, so the app registers its RAW device
+// token (`getDevicePushTokenAsync`) — no Expo push service, no EAS project,
+// no projectId. Registration is a graceful no-op unless the whole chain is
+// available: sessions token configured (server mounts /push/register behind
+// the same bearer guard as /sessions/*) and notification permission granted.
+// Every early-out is a typed status so callers and tests can see exactly why
+// nothing was registered. Decision:
+// workspaces/brain-intake/decisions/2026-07-22-push-direct-apns-over-expo.md
 //
-// Deeplinks: the server pushes `data.url = brainer:///session/{id}` (the
-// `Linking.createURL` shape for a standalone app). Tapping the notification
-// routes to the expo-router `session/[id]` screen; the foreground banner is
-// handled by the shared notification handler in notify-runtime.
+// Deeplinks: the server puts `brainer:///session/{id}` (the
+// `Linking.createURL` shape for a standalone app) BOTH at the payload top
+// level (surfaced via the notification trigger payload) and under the `body`
+// custom key (which expo-notifications maps into `request.content.data` on
+// iOS). Tapping the notification routes to the expo-router `session/[id]`
+// screen; the foreground banner is handled by the shared notification
+// handler in notify-runtime.
 
-import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 
@@ -21,33 +25,27 @@ import { settings } from "./brain";
 export type PushRegistrationStatus =
   | "registered"
   | "no-sessions-token"
-  | "no-project-id"
   | "permission-denied"
   | "failed";
 
 export interface PushRegistrationDeps {
   getSessionsToken(): Promise<string>;
   getBaseUrl(): Promise<string>;
-  getProjectId(): string | null;
   requestPermission(): Promise<boolean>;
-  getExpoPushToken(projectId: string): Promise<string>;
+  /** Raw APNs device token (hex string on iOS). Throws on simulators. */
+  getDevicePushToken(): Promise<string>;
   fetchImpl: typeof fetch;
-}
-
-/** `extra.eas.projectId` from app config — null until `eas init` has run. */
-export function getEasProjectId(): string | null {
-  const extra = Constants.expoConfig?.extra as { eas?: { projectId?: unknown } } | undefined;
-  const id = extra?.eas?.projectId;
-  return typeof id === "string" && id.length > 0 ? id : null;
 }
 
 function realDeps(): PushRegistrationDeps {
   return {
     getSessionsToken: () => settings.getSessionsToken(),
     getBaseUrl: () => settings.getBaseUrl(),
-    getProjectId: getEasProjectId,
     requestPermission: async () => (await Notifications.requestPermissionsAsync()).granted,
-    getExpoPushToken: async (projectId) => (await Notifications.getExpoPushTokenAsync({ projectId })).data,
+    getDevicePushToken: async () => {
+      const token = await Notifications.getDevicePushTokenAsync();
+      return typeof token.data === "string" ? token.data : JSON.stringify(token.data);
+    },
     fetchImpl: fetch,
   };
 }
@@ -60,15 +58,13 @@ export async function registerForSessionPush(
   try {
     const sessionsToken = await deps.getSessionsToken();
     if (!sessionsToken) return "no-sessions-token";
-    const projectId = deps.getProjectId();
-    if (projectId === null) return "no-project-id";
     if (!(await deps.requestPermission())) return "permission-denied";
-    const pushToken = await deps.getExpoPushToken(projectId);
+    const deviceToken = await deps.getDevicePushToken();
     const base = (await deps.getBaseUrl()).replace(/\/+$/, "");
     const res = await deps.fetchImpl(`${base}/push/register`, {
       method: "POST",
       headers: { authorization: `Bearer ${sessionsToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ token: pushToken }),
+      body: JSON.stringify({ token: deviceToken }),
     });
     return res.ok ? "registered" : "failed";
   } catch {
@@ -76,7 +72,7 @@ export async function registerForSessionPush(
   }
 }
 
-/** Parse the in-app route out of a push's `data.url`. Accepts both
+/** Parse the in-app route out of a push's deeplink url. Accepts both
  * `brainer:///session/x` and `brainer://session/x`; anything that is not a
  * session-detail link is ignored (null). */
 export function pathFromPushUrl(url: unknown): string | null {
@@ -87,12 +83,24 @@ export function pathFromPushUrl(url: unknown): string | null {
   return path;
 }
 
+/** The deeplink may surface in content.data (expo mapping of the `body` key)
+ * or in the raw APNs trigger payload (top-level `url` / `body.url`). */
+export function urlFromNotification(response: Notifications.NotificationResponse | null): unknown {
+  if (response === null) return null;
+  const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+  if (typeof data?.url === "string") return data.url;
+  const trigger = response.notification.request.trigger as { payload?: Record<string, unknown> } | null;
+  const payload = trigger?.payload;
+  if (typeof payload?.url === "string") return payload.url;
+  const body = payload?.body as Record<string, unknown> | undefined;
+  return body?.url ?? null;
+}
+
 function routeFromResponse(
   response: Notifications.NotificationResponse | null,
   navigate: (path: string) => void,
 ): void {
-  const data = response?.notification.request.content.data as Record<string, unknown> | undefined;
-  const path = pathFromPushUrl(data?.url);
+  const path = pathFromPushUrl(urlFromNotification(response));
   if (path !== null) navigate(path);
 }
 

@@ -15,6 +15,7 @@ import { registerSessionRoutes } from './sessions/routes.js';
 import { PushTokenStore } from './push/tokens.js';
 import { PushSender } from './push/sender.js';
 import { wireSessionPush } from './push/wire.js';
+import { ApnsClient, type ApnsKeyConfig, type ApnsTransport } from './push/apns.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -44,8 +45,11 @@ export interface ServerConfig {
     efforts: string[];
     /** Test seam: inject a fake Agent SDK. Production wires the real query(). */
     sdk: SessionSdk;
-    /** BI-C3: test seam for the Expo push API. Production uses global fetch. */
-    pushFetch?: typeof fetch;
+    /** BI-C3: direct-APNs push key. Absent ⇒ pushes are a silent no-op
+     * (registration still works, so devices are ready when the key lands). */
+    apns?: ApnsKeyConfig;
+    /** BI-C3: test seam for the APNs HTTP/2 request. Production uses node:http2. */
+    apnsTransport?: ApnsTransport;
   };
 }
 
@@ -118,14 +122,19 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       bashAllowlist: config.sessions.bashAllowlist,
       approvalTimeoutMs: config.sessions.approvalTimeoutMin * 60_000,
     });
-    // BI-C3: session pushes. Always wired alongside the sessions API — with no
-    // registered device tokens the sender is a silent no-op, so the server
-    // runs unchanged when push was never configured.
+    // BI-C3: session pushes over direct APNs. Registration is always mounted
+    // (devices can register before the .p8 key exists); delivery is wired only
+    // when the APNs key config is present — otherwise every send is a silent
+    // no-op and the server runs unchanged.
     const pushTokens = new PushTokenStore(config.sessions.sessionsDir);
+    const apnsClient =
+      config.sessions.apns !== undefined
+        ? new ApnsClient(config.sessions.apns, config.sessions.apnsTransport)
+        : undefined;
     const pushSender = new PushSender({
       tokens: pushTokens,
       onError: (err) => app.log.error({ err }, 'session push failed'),
-      ...(config.sessions.pushFetch !== undefined ? { fetchImpl: config.sessions.pushFetch } : {}),
+      ...(apnsClient !== undefined ? { client: apnsClient } : {}),
     });
     wireSessionPush({ store, sender: pushSender });
     registerSessionRoutes(app, {
