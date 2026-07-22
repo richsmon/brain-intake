@@ -1,7 +1,9 @@
 // Reviews (MC-R1) — the MC review surface: open PRs across the market-clue
-// org, tap one, pick model + effort, launch. The server runs the review as a
-// normal gated coding session, so "Launch review" drops straight into the
-// existing session detail. Reached from the Coding tab's header.
+// org AND the founder's personal repos (MC-R2), tap one, pick model + effort,
+// launch. The server runs the review as a normal gated coding session, so
+// "Launch review" drops straight into the existing session detail. Reached
+// from the Coding tab's header. Rows show `owner/repo` since the list now
+// spans two owners.
 
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -106,6 +108,7 @@ function LaunchSheet({
       const api = await getSessionsApi();
       if (!api) throw new Error("no token");
       const { sessionId } = await api.launchReview({
+        owner: pr.owner,
         repo: pr.repo,
         pr: pr.number,
         model,
@@ -116,7 +119,10 @@ function LaunchSheet({
     } catch (err) {
       setLaunching(false);
       if (err instanceof ApiError && err.status === 409) {
-        Alert.alert("No local checkout", `The host has no checkout of ${pr.repo}. Clone it there first.`);
+        Alert.alert(
+          "No local checkout",
+          `The host has no checkout of ${pr.owner}/${pr.repo}. Clone it there first.`,
+        );
       } else {
         Alert.alert("Review didn't start", "Check the tailnet and the sessions token.");
       }
@@ -138,7 +144,7 @@ function LaunchSheet({
             {pr !== null ? (
               <View style={styles.prSummary}>
                 <Text style={[styles.rowMono, { color: colors.ink3 }]}>
-                  {pr.repo} #{pr.number} · {pr.branch}
+                  {pr.owner}/{pr.repo} #{pr.number} · {pr.branch}
                 </Text>
                 <Text style={[styles.rowTitle, { color: colors.ink1 }]}>{pr.title}</Text>
               </View>
@@ -221,7 +227,7 @@ export default function ReviewsScreen() {
       ) : (
         <FlatList
           data={prs}
-          keyExtractor={(pr) => `${pr.repo}#${pr.number}`}
+          keyExtractor={(pr) => `${pr.owner}/${pr.repo}#${pr.number}`}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => setPicked(item)}
@@ -232,7 +238,7 @@ export default function ReviewsScreen() {
               ]}
             >
               <Text style={[styles.rowMono, { color: colors.ink3 }]}>
-                {item.repo} #{item.number}
+                {item.owner}/{item.repo} #{item.number}
               </Text>
               <Text numberOfLines={2} style={[styles.rowTitle, { color: colors.ink1 }]}>
                 {item.title}
@@ -248,7 +254,7 @@ export default function ReviewsScreen() {
           )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
           ListEmptyComponent={
-            loaded ? <EmptyState text="No open PRs across market-clue right now." /> : null
+            loaded ? <EmptyState text="No open PRs across your repos right now." /> : null
           }
         />
       )}

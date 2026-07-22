@@ -112,6 +112,41 @@ describe('listSessions', () => {
     expect(byId[a]).toBe('running');
     expect(byId[b]).toBe('paused');
   });
+
+  test('surfaces usage + total_cost_usd from the LAST result event (BI-C5)', () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    store.appendEvent(id, {
+      event: 'result',
+      outcome: 'success',
+      usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      total_cost_usd: 0.01,
+    });
+    // Second turn: the SDK's counters are session-cumulative — last result wins.
+    store.appendEvent(id, {
+      event: 'result',
+      outcome: 'success',
+      usage: { input_tokens: 1200, output_tokens: 340, cache_creation_input_tokens: 5000, cache_read_input_tokens: 88000 },
+      total_cost_usd: 0.4321,
+    });
+    store.appendEvent(id, { event: 'status', status: 'done' });
+
+    expect(store.listSessions()[0]).toMatchObject({
+      usage: { input_tokens: 1200, output_tokens: 340, cache_creation_input_tokens: 5000, cache_read_input_tokens: 88000 },
+      total_cost_usd: 0.4321,
+    });
+  });
+
+  test('sessions whose result carries no usage omit the fields entirely (BI-C5)', () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    store.appendEvent(id, { event: 'result', outcome: 'success' });
+    store.appendEvent(id, { event: 'status', status: 'done' });
+
+    const listed = store.listSessions()[0]!;
+    expect('usage' in listed).toBe(false);
+    expect('total_cost_usd' in listed).toBe(false);
+  });
 });
 
 describe('subscribe', () => {

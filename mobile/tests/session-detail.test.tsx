@@ -203,6 +203,39 @@ describe("SessionDetailScreen", () => {
     expect(screen.queryByPlaceholderText("Message the agent…")).toBeNull();
     expect(screen.queryByText("Approve")).toBeNull();
   });
+
+  it("done summary renders per-run tokens and cost from the result event (BI-C5)", async () => {
+    mockState = "done";
+    mockEvents = [
+      created,
+      { index: 1, event: "status", status: "running" },
+      {
+        index: 2,
+        event: "result",
+        outcome: "success",
+        summary: "All wired up.",
+        usage: { input_tokens: 1200, output_tokens: 340, cache_creation_input_tokens: 5000, cache_read_input_tokens: 88000 },
+        total_cost_usd: 0.4321,
+      },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    expect(await screen.findByText("All wired up.")).toBeOnTheScreen();
+    expect(screen.getByText("1.2k in · 340 out · 88k cached · $0.43")).toBeOnTheScreen();
+  });
+
+  it("a result without usage renders no token line (BI-C5)", async () => {
+    mockState = "done";
+    mockEvents = [
+      created,
+      { index: 1, event: "status", status: "running" },
+      { index: 2, event: "result", outcome: "success", summary: "Done without telemetry." },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    expect(await screen.findByText("Done without telemetry.")).toBeOnTheScreen();
+    expect(screen.queryByText(/ in · /)).toBeNull();
+  });
 });
 
 describe("deriveSession", () => {
@@ -243,6 +276,34 @@ describe("deriveSession", () => {
     ]);
     expect(flipped.mode).toBe("auto");
     expect(flipped.items.some((i) => i.type === "sys" && i.text === "mode → auto")).toBe(true);
+  });
+
+  it("result items carry parsed usage + cost; malformed usage is dropped (BI-C5)", () => {
+    const derived = deriveSession([
+      created,
+      { index: 1, event: "status", status: "running" },
+      {
+        index: 2,
+        event: "result",
+        outcome: "success",
+        usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 1, cache_read_input_tokens: 2 },
+        total_cost_usd: 0.05,
+      },
+      { index: 3, event: "status", status: "done" },
+    ]);
+    const result = derived.items.find((i) => i.type === "result");
+    expect(result).toMatchObject({
+      usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 1, cache_read_input_tokens: 2 },
+      totalCostUsd: 0.05,
+    });
+
+    const malformed = deriveSession([
+      created,
+      { index: 1, event: "result", outcome: "success", usage: { input_tokens: "lots" } },
+    ]);
+    const bare = malformed.items.find((i) => i.type === "result");
+    expect(bare).toBeDefined();
+    expect(bare && "usage" in bare).toBe(false);
   });
 
   it("pending stays null unless the session is actually waiting", () => {

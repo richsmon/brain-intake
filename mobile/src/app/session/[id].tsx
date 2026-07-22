@@ -26,12 +26,15 @@ import { SessionStateChip } from "../../components/ds/session-state-chip";
 import { getSessionsApi } from "../../lib/brain";
 import { diffForTool, diffStat, isEditTool, toolFilePath, type DiffLine } from "../../lib/diff";
 import {
+  formatUsageLine,
   isTerminal,
+  parseUsage,
   PERMISSION_MODES,
   startEventsPoll,
   type PermissionMode,
   type SessionEvent,
   type SessionState,
+  type SessionUsage,
 } from "../../lib/sessions";
 import { useTheme } from "../../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
@@ -49,7 +52,7 @@ type Item =
       decision?: string;
     }
   | { type: "sys"; key: string; text: string }
-  | { type: "result"; key: string; outcome: string; summary?: string };
+  | { type: "result"; key: string; outcome: string; summary?: string; usage?: SessionUsage; totalCostUsd?: number };
 
 interface Derived {
   items: Item[];
@@ -142,14 +145,19 @@ export function deriveSession(events: SessionEvent[]): Derived {
         mode = toPermissionMode(str(e.mode));
         items.push({ type: "sys", key, text: `mode → ${str(e.mode)}` });
         break;
-      case "result":
+      case "result": {
+        // BI-C5: per-run tokens + cost ride the result event (mirrored SDK shape).
+        const usage = parseUsage(e.usage);
         items.push({
           type: "result",
           key,
           outcome: str(e.outcome),
           ...(typeof e.summary === "string" ? { summary: e.summary } : {}),
+          ...(usage !== null ? { usage } : {}),
+          ...(typeof e.total_cost_usd === "number" ? { totalCostUsd: e.total_cost_usd } : {}),
         });
         break;
+      }
       default:
         break;
     }
@@ -334,7 +342,8 @@ export default function SessionDetailScreen() {
                   {item.text}
                 </Text>
               );
-            case "result":
+            case "result": {
+              const usageLine = formatUsageLine(item.usage, item.totalCostUsd);
               return (
                 <View
                   key={item.key}
@@ -352,6 +361,9 @@ export default function SessionDetailScreen() {
                   {item.summary ? (
                     <Text style={[styles.chatText, { color: colors.ink1 }]}>{item.summary}</Text>
                   ) : null}
+                  {usageLine !== null ? (
+                    <Text style={[styles.mono, { color: colors.ink3 }]}>{usageLine}</Text>
+                  ) : null}
                   {derived.fileStats.length > 0 ? (
                     <View style={styles.statBlock}>
                       {derived.fileStats.map((s) => (
@@ -365,6 +377,7 @@ export default function SessionDetailScreen() {
                   ) : null}
                 </View>
               );
+            }
           }
         })}
       </ScrollView>

@@ -26,7 +26,7 @@ const PR_NODES = [
     additions: 7390,
     deletions: 2155,
     author: { login: 'ArsenLabovich' },
-    repository: { name: 'app' },
+    repository: { name: 'app', owner: { login: 'market-clue' } },
   },
   {
     number: 94,
@@ -36,7 +36,18 @@ const PR_NODES = [
     additions: 1534,
     deletions: 34,
     author: { login: 'palo-kunovsky' },
-    repository: { name: 'platform' },
+    repository: { name: 'platform', owner: { login: 'market-clue' } },
+  },
+  // MC-R2: the founder's personal repos ride the same list.
+  {
+    number: 13,
+    title: 'Voice input for the New Session prompt',
+    headRefName: 'feat/voice-prompt',
+    updatedAt: '2026-07-22T01:45:06Z',
+    additions: 320,
+    deletions: 12,
+    author: { login: 'richsmon' },
+    repository: { name: 'brain-intake', owner: { login: 'richsmon' } },
   },
 ];
 
@@ -65,11 +76,14 @@ function build(gh: GhRunner): {
   store: SessionStore;
   runner: FakeRunner;
   checkoutRoot: string;
+  ownRoot: string;
 } {
   const store = new SessionStore(mkdtempSync(join(tmpdir(), 'reviews-sessions-')));
   const runner = new FakeRunner();
   const checkoutRoot = mkdtempSync(join(tmpdir(), 'mc-checkouts-'));
   mkdirSync(join(checkoutRoot, 'app'));
+  const ownRoot = mkdtempSync(join(tmpdir(), 'own-checkouts-'));
+  mkdirSync(join(ownRoot, 'brain-intake'));
   const app = Fastify();
   registerReviewRoutes(app, {
     store,
@@ -77,28 +91,35 @@ function build(gh: GhRunner): {
     token: TOKEN,
     org: 'market-clue',
     checkoutRoot,
+    ownUser: 'richsmon',
+    ownRoot,
     gh,
   });
-  return { app, store, runner, checkoutRoot };
+  return { app, store, runner, checkoutRoot, ownRoot };
 }
 
 const ghOk: GhRunner = () => Promise.resolve(graphqlPayload(PR_NODES));
 
 describe('listOpenPrs', () => {
-  test('one GraphQL search call — flattens nodes, newest activity first', async () => {
+  test('ONE GraphQL search call covers org + personal repos, newest activity first', async () => {
     const calls: string[][] = [];
     const gh: GhRunner = (args) => {
       calls.push(args);
       return Promise.resolve(graphqlPayload(PR_NODES));
     };
-    const prs = await listOpenPrs(gh, 'market-clue');
+    const prs = await listOpenPrs(gh, 'market-clue', 'richsmon');
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.slice(0, 2)).toEqual(['api', 'graphql']);
-    expect(calls[0]!.join(' ')).toContain('q=org:market-clue is:pr is:open');
+    expect(calls[0]!.join(' ')).toContain('q=org:market-clue user:richsmon is:pr is:open');
 
-    expect(prs.map((p) => `${p.repo}#${p.number}`)).toEqual(['platform#94', 'app#90']);
-    expect(prs[1]).toEqual({
+    expect(prs.map((p) => `${p.owner}/${p.repo}#${p.number}`)).toEqual([
+      'richsmon/brain-intake#13',
+      'market-clue/platform#94',
+      'market-clue/app#90',
+    ]);
+    expect(prs[2]).toEqual({
+      owner: 'market-clue',
       repo: 'app',
       number: 90,
       title: 'Add login flow',
@@ -110,9 +131,21 @@ describe('listOpenPrs', () => {
     });
   });
 
+  test('org-only search when no user is given', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = (args) => {
+      calls.push(args);
+      return Promise.resolve(graphqlPayload([]));
+    };
+    await listOpenPrs(gh, 'market-clue');
+    expect(calls[0]!.join(' ')).toContain('q=org:market-clue is:pr is:open');
+    expect(calls[0]!.join(' ')).not.toContain('user:');
+  });
+
   test('drops malformed nodes instead of crashing', async () => {
-    const gh: GhRunner = () => Promise.resolve(graphqlPayload([{}, PR_NODES[0]]));
-    const prs = await listOpenPrs(gh, 'market-clue');
+    const gh: GhRunner = () =>
+      Promise.resolve(graphqlPayload([{}, { number: 7, repository: { name: 'no-owner' } }, PR_NODES[0]]));
+    const prs = await listOpenPrs(gh, 'market-clue', 'richsmon');
     expect(prs).toHaveLength(1);
     expect(prs[0]!.number).toBe(90);
   });
@@ -133,13 +166,14 @@ describe('bearer-token guard', () => {
 });
 
 describe('GET /reviews/prs', () => {
-  test('lists open PRs across the org', async () => {
+  test('lists open PRs across the org AND the personal repos, each row owner-tagged', async () => {
     const { app } = build(ghOk);
     const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
     expect(res.statusCode).toBe(200);
     const prs = res.json();
-    expect(prs).toHaveLength(2);
-    expect(prs[0]).toMatchObject({ repo: 'platform', number: 94, author: 'palo-kunovsky' });
+    expect(prs).toHaveLength(3);
+    expect(prs[0]).toMatchObject({ owner: 'richsmon', repo: 'brain-intake', number: 13 });
+    expect(prs[1]).toMatchObject({ owner: 'market-clue', repo: 'platform', number: 94, author: 'palo-kunovsky' });
   });
 
   test('gh failure ⇒ 502, mirroring the approvals routes', async () => {
@@ -179,6 +213,40 @@ describe('POST /reviews', () => {
     });
   });
 
+  test('owner=richsmon resolves the checkout under the personal root (MC-R2)', async () => {
+    const { app, runner, ownRoot } = build(ghOk);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { owner: 'richsmon', repo: 'brain-intake', pr: 13 },
+    });
+    expect(res.statusCode).toBe(201);
+    const { meta } = runner.started[0]!;
+    expect(meta.repo).toBe('richsmon/brain-intake');
+    expect(meta.repoPath).toBe(join(ownRoot, 'brain-intake'));
+    expect(meta.prompt).toContain('gh pr diff 13 --repo richsmon/brain-intake');
+  });
+
+  test('omitting owner keeps the org default — pre-MC-R2 app builds still work', async () => {
+    const { app, runner, checkoutRoot } = build(ghOk);
+    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    expect(res.statusCode).toBe(201);
+    expect(runner.started[0]!.meta.repo).toBe('market-clue/app');
+    expect(runner.started[0]!.meta.repoPath).toBe(join(checkoutRoot, 'app'));
+  });
+
+  test('unknown owner ⇒ 400 — prototype keys included', async () => {
+    const { app, runner } = build(ghOk);
+    const bad = async (owner: string) =>
+      (await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { owner, repo: 'app', pr: 90 } }))
+        .statusCode;
+    expect(await bad('acme')).toBe(400);
+    expect(await bad('constructor')).toBe(400);
+    expect(await bad('__proto__')).toBe(400);
+    expect(runner.started).toHaveLength(0);
+  });
+
   test('the brief fetches the diff read-only and forbids any GitHub write', async () => {
     const { app, runner } = build(ghOk);
     await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
@@ -204,6 +272,20 @@ describe('POST /reviews', () => {
     expect(runner.started).toHaveLength(0);
   });
 
+  test('missing personal checkout 409s under the personal root (MC-R2)', async () => {
+    const { app, runner, ownRoot } = build(ghOk);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { owner: 'richsmon', repo: 'universal-brain', pr: 35 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain('no local checkout for richsmon/universal-brain');
+    expect(res.json().error).toContain(join(ownRoot, 'universal-brain'));
+    expect(runner.started).toHaveLength(0);
+  });
+
   test('invalid repo name or pr ⇒ 400 (path-traversal names included)', async () => {
     const { app } = build(ghOk);
     const bad = async (payload: Record<string, unknown>) =>
@@ -214,6 +296,7 @@ describe('POST /reviews', () => {
     expect(await bad({ repo: 'app' })).toBe(400);
     expect(await bad({ repo: 'app', pr: 0 })).toBe(400);
     expect(await bad({ repo: 'app', pr: '90' })).toBe(400);
+    expect(await bad({ owner: 'richsmon', repo: '../universal-brain', pr: 35 })).toBe(400);
   });
 
   test('model defaults like the sessions route when omitted', async () => {
@@ -225,8 +308,8 @@ describe('POST /reviews', () => {
 });
 
 describe('buildReviewPrompt', () => {
-  test('carries org/repo/pr into every gh command it prescribes', () => {
-    const prompt = buildReviewPrompt({ org: 'market-clue', repo: 'platform', pr: 94 });
+  test('carries owner/repo/pr into every gh command it prescribes', () => {
+    const prompt = buildReviewPrompt({ owner: 'market-clue', repo: 'platform', pr: 94 });
     expect(prompt).toContain('pull request #94 in market-clue/platform');
     expect(prompt).toContain('gh pr diff 94 --repo market-clue/platform');
     expect(prompt).toContain('Do not create, edit or delete any files.');

@@ -25,11 +25,26 @@ export interface SessionMeta {
   effort?: string;
 }
 
+/**
+ * BI-C5: token usage mirrored from the Agent SDK result message. Field names
+ * stay the SDK's snake_case on purpose — the `result` event, the list payload
+ * and the mobile client all carry the same shape, so nothing ever re-maps.
+ */
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}
+
 export interface SessionSummary extends SessionMeta {
   id: string;
   state: SessionState;
   createdAt: string;
   lastEvent: string;
+  /** BI-C5: from the session's last `result` event, when the SDK reported usage. */
+  usage?: SessionUsage;
+  total_cost_usd?: number;
 }
 
 export class SessionStore {
@@ -97,6 +112,10 @@ export class SessionStore {
       const events = this.readEvents(id);
       if (events.length === 0) continue;
       const created = events[0]!;
+      // BI-C5: the SDK reports session-cumulative usage on every result — the
+      // last result event is the session's totals.
+      const lastResult = events.filter((e) => e.event === 'result').at(-1);
+      const usage = lastResult !== undefined ? toUsage(lastResult.usage) : null;
       out.push({
         id,
         state: sessionState(events),
@@ -108,6 +127,10 @@ export class SessionStore {
         model: str(created.model),
         permissionMode: str(created.permissionMode),
         ...(typeof created.effort === 'string' ? { effort: created.effort } : {}),
+        ...(usage !== null ? { usage } : {}),
+        ...(lastResult !== undefined && typeof lastResult.total_cost_usd === 'number'
+          ? { total_cost_usd: lastResult.total_cost_usd }
+          : {}),
       });
     }
     return out;
@@ -127,6 +150,20 @@ export class SessionStore {
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/** BI-C5: read a `usage` object off a stored result event, defensively. */
+function toUsage(v: unknown): SessionUsage | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const u = v as Record<string, unknown>;
+  if (typeof u.input_tokens !== 'number' || typeof u.output_tokens !== 'number') return null;
+  const num = (x: unknown): number => (typeof x === 'number' ? x : 0);
+  return {
+    input_tokens: u.input_tokens,
+    output_tokens: u.output_tokens,
+    cache_creation_input_tokens: num(u.cache_creation_input_tokens),
+    cache_read_input_tokens: num(u.cache_read_input_tokens),
+  };
 }
 
 /** Derive the session's state from its trail — the last `status` event wins. */
