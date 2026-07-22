@@ -18,6 +18,7 @@ import { wireSessionPush } from './push/wire.js';
 import { ApnsClient, type ApnsKeyConfig, type ApnsTransport } from './push/apns.js';
 import { registerReviewRoutes } from './reviews/routes.js';
 import type { GhRunner } from './reviews/gh.js';
+import type { GitRunner } from './reviews/worktree.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -69,6 +70,10 @@ export interface ServerConfig {
       ownRoot: string;
       /** Test seam: inject a fake gh runner. Production shells out to gh. */
       gh: GhRunner;
+      /** MC-R6: test seam for the worktree lifecycle. Production shells out to git. */
+      git: GitRunner;
+      /** MC-R6: where unique review worktrees are created. Defaults to os tmpdir. */
+      worktreeBase?: string;
     };
   };
 }
@@ -185,6 +190,10 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         ownUser: config.sessions.reviews.ownUser,
         ownRoot: config.sessions.reviews.ownRoot,
         gh: config.sessions.reviews.gh,
+        git: config.sessions.reviews.git,
+        ...(config.sessions.reviews.worktreeBase !== undefined
+          ? { worktreeBase: config.sessions.reviews.worktreeBase }
+          : {}),
       });
     }
   }

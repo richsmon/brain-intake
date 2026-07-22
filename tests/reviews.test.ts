@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { describe, expect, test } from 'vitest';
+import { DEFAULT_BASH_ALLOWLIST } from '../src/config.js';
 import { SessionStore, type SessionMeta } from '../src/sessions/store.js';
 import type { SessionRunnerLike } from '../src/sessions/routes.js';
 import { listOpenPrs } from '../src/reviews/prs.js';
-import { buildReviewPrompt } from '../src/reviews/prompt.js';
+import { buildFullReviewPrompt, buildReviewPrompt } from '../src/reviews/prompt.js';
 import { registerReviewRoutes } from '../src/reviews/routes.js';
 import type { GhRunner } from '../src/reviews/gh.js';
+import { fullReviewBashAllowlist, type GitRunner } from '../src/reviews/worktree.js';
 
 const TOKEN = 'test-bearer-token';
 const AUTH = { authorization: `Bearer ${TOKEN}` };
@@ -71,19 +73,40 @@ class FakeRunner implements SessionRunnerLike {
   }
 }
 
-function build(gh: GhRunner): {
+interface BuildOptions {
+  /** MC-R6: whether the MC brain checkout exists at `{checkoutRoot}/brain`. */
+  mcBrain?: boolean;
+  /** MC-R6: override the injected git runner (defaults to record-and-succeed). */
+  git?: GitRunner;
+}
+
+function build(
+  gh: GhRunner,
+  opts: BuildOptions = {},
+): {
   app: FastifyInstance;
   store: SessionStore;
   runner: FakeRunner;
   checkoutRoot: string;
   ownRoot: string;
+  worktreeBase: string;
+  gitCalls: string[][];
 } {
   const store = new SessionStore(mkdtempSync(join(tmpdir(), 'reviews-sessions-')));
   const runner = new FakeRunner();
   const checkoutRoot = mkdtempSync(join(tmpdir(), 'mc-checkouts-'));
   mkdirSync(join(checkoutRoot, 'app'));
+  if (opts.mcBrain !== false) mkdirSync(join(checkoutRoot, 'brain'));
   const ownRoot = mkdtempSync(join(tmpdir(), 'own-checkouts-'));
   mkdirSync(join(ownRoot, 'brain-intake'));
+  const worktreeBase = mkdtempSync(join(tmpdir(), 'wt-base-'));
+  const gitCalls: string[][] = [];
+  const git: GitRunner =
+    opts.git ??
+    ((args) => {
+      gitCalls.push(args);
+      return Promise.resolve('');
+    });
   const app = Fastify();
   registerReviewRoutes(app, {
     store,
@@ -94,11 +117,22 @@ function build(gh: GhRunner): {
     ownUser: 'richsmon',
     ownRoot,
     gh,
+    git,
+    worktreeBase,
   });
-  return { app, store, runner, checkoutRoot, ownRoot };
+  return { app, store, runner, checkoutRoot, ownRoot, worktreeBase, gitCalls };
 }
 
-const ghOk: GhRunner = () => Promise.resolve(graphqlPayload(PR_NODES));
+/** gh fake: answers the PR-listing GraphQL search AND the MC-R6
+ * `gh pr view --json headRefName` worktree-prep call. */
+const ghOk: GhRunner = (args) => {
+  if (args[0] === 'pr' && args[1] === 'view') {
+    const pr = Number(args[2]);
+    const node = PR_NODES.find((n) => n.number === pr);
+    return Promise.resolve(JSON.stringify({ headRefName: node?.headRefName ?? 'main' }));
+  }
+  return Promise.resolve(graphqlPayload(PR_NODES));
+};
 
 /** Write a session log by hand — deterministic ids/timestamps, unlike createSession. */
 function writeSession(store: SessionStore, id: string, events: Array<Record<string, unknown>>): void {
@@ -193,6 +227,17 @@ describe('GET /reviews/prs', () => {
     expect(prs).toHaveLength(3);
     expect(prs[0]).toMatchObject({ owner: 'richsmon', repo: 'brain-intake', number: 13 });
     expect(prs[1]).toMatchObject({ owner: 'market-clue', repo: 'platform', number: 94, author: 'palo-kunovsky' });
+  });
+
+  test('org rows are tagged fullReview: true, personal rows false (MC-R6)', async () => {
+    const { app } = build(ghOk);
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const byKey = Object.fromEntries(
+      res.json().map((r: { owner: string; number: number; fullReview: boolean }) => [`${r.owner}#${r.number}`, r]),
+    );
+    expect(byKey['market-clue#94'].fullReview).toBe(true);
+    expect(byKey['market-clue#90'].fullReview).toBe(true);
+    expect(byKey['richsmon#13'].fullReview).toBe(false);
   });
 
   test('rows carry lastReview: null when no review session was ever launched (MC-R3)', async () => {
@@ -323,53 +368,7 @@ describe('GET /reviews/prs', () => {
   });
 });
 
-describe('POST /reviews', () => {
-  test('launches a gated review session in the local checkout and returns {sessionId}', async () => {
-    const { app, store, runner, checkoutRoot } = build(ghOk);
-    const res = await app.inject({
-      method: 'POST',
-      url: '/reviews',
-      headers: AUTH,
-      payload: { repo: 'app', pr: 90, model: 'claude-opus-4-8', effort: 'high' },
-    });
-    expect(res.statusCode).toBe(201);
-    const { sessionId } = res.json();
-    expect(store.has(sessionId)).toBe(true);
-
-    expect(runner.started).toHaveLength(1);
-    const { meta, opts } = runner.started[0]!;
-    expect(meta.repo).toBe('market-clue/app');
-    expect(meta.repoPath).toBe(join(checkoutRoot, 'app'));
-    expect(meta.permissionMode).toBe('gated');
-    expect(opts).toEqual({ model: 'claude-opus-4-8', permissionMode: 'gated', effort: 'high' });
-
-    // The session shows up in the store exactly like a coding session would —
-    // plus the MC-R3 review ref that links it back to the PR list.
-    expect(store.readEvents(sessionId)[0]).toMatchObject({
-      event: 'status',
-      status: 'created',
-      repo: 'market-clue/app',
-      model: 'claude-opus-4-8',
-      review: { owner: 'market-clue', repo: 'app', pr: 90 },
-    });
-  });
-
-  test('a launched review immediately shows as lastReview on its PR row (MC-R3 round-trip)', async () => {
-    const { app } = build(ghOk);
-    const post = await app.inject({
-      method: 'POST',
-      url: '/reviews',
-      headers: AUTH,
-      payload: { repo: 'app', pr: 90 },
-    });
-    const { sessionId } = post.json();
-
-    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
-    const row = res.json().find((r: { owner: string; number: number }) => r.owner === 'market-clue' && r.number === 90);
-    expect(row.lastReview).toMatchObject({ sessionId, state: 'created' });
-    expect(typeof row.lastReview.ts).toBe('string');
-  });
-
+describe('POST /reviews — read-only quick look (non-org owners)', () => {
   test('owner=richsmon resolves the checkout under the personal root (MC-R2)', async () => {
     const { app, runner, ownRoot } = build(ghOk);
     const res = await app.inject({
@@ -385,48 +384,45 @@ describe('POST /reviews', () => {
     expect(meta.prompt).toContain('gh pr diff 13 --repo richsmon/brain-intake');
   });
 
-  test('omitting owner keeps the org default — pre-MC-R2 app builds still work', async () => {
-    const { app, runner, checkoutRoot } = build(ghOk);
-    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
-    expect(res.statusCode).toBe(201);
-    expect(runner.started[0]!.meta.repo).toBe('market-clue/app');
-    expect(runner.started[0]!.meta.repoPath).toBe(join(checkoutRoot, 'app'));
-  });
-
-  test('unknown owner ⇒ 400 — prototype keys included', async () => {
-    const { app, runner } = build(ghOk);
-    const bad = async (owner: string) =>
-      (await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { owner, repo: 'app', pr: 90 } }))
-        .statusCode;
-    expect(await bad('acme')).toBe(400);
-    expect(await bad('constructor')).toBe(400);
-    expect(await bad('__proto__')).toBe(400);
-    expect(runner.started).toHaveLength(0);
-  });
-
-  test('the brief fetches the diff read-only and forbids any GitHub write', async () => {
-    const { app, runner } = build(ghOk);
-    await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
-    const prompt = runner.started[0]!.meta.prompt;
-    expect(prompt).toContain('gh pr view 90 --repo market-clue/app');
-    expect(prompt).toContain('gh pr diff 90 --repo market-clue/app');
-    expect(prompt).toContain('READ-ONLY');
-    expect(prompt).toContain('never post comments');
-    expect(prompt).toContain('never push');
-  });
-
-  test('repo without a local checkout ⇒ 409 with the expected path — never clones', async () => {
-    const { app, runner, checkoutRoot } = build(ghOk);
+  test('MC-R6 regression: a richsmon review is the OLD flow byte-for-byte — gated, read-only brief, no worktree, no allowlist extension', async () => {
+    const { app, store, runner, ownRoot, gitCalls } = build(ghOk);
     const res = await app.inject({
       method: 'POST',
       url: '/reviews',
       headers: AUTH,
-      payload: { repo: 'platform', pr: 94 },
+      payload: { owner: 'richsmon', repo: 'brain-intake', pr: 13, model: 'claude-opus-4-8', effort: 'high' },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error).toContain('no local checkout for market-clue/platform');
-    expect(res.json().error).toContain(join(checkoutRoot, 'platform'));
-    expect(runner.started).toHaveLength(0);
+    expect(res.statusCode).toBe(201);
+    const { sessionId } = res.json();
+
+    const { meta, opts } = runner.started[0]!;
+    expect(meta.permissionMode).toBe('gated');
+    expect(meta.repoPath).toBe(join(ownRoot, 'brain-intake'));
+    expect(meta.prompt).toBe(buildReviewPrompt({ owner: 'richsmon', repo: 'brain-intake', pr: 13 }));
+    // No session-scoped allowlist extension, no worktree — no git calls at all.
+    expect(opts).toEqual({ model: 'claude-opus-4-8', permissionMode: 'gated', effort: 'high' });
+    expect(gitCalls).toHaveLength(0);
+
+    // Reaching a terminal state never triggers worktree cleanup either.
+    store.appendEvent(sessionId, { event: 'status', status: 'done' });
+    await new Promise((r) => setImmediate(r));
+    expect(gitCalls).toHaveLength(0);
+  });
+
+  test('the read-only brief fetches the diff and forbids any GitHub write', async () => {
+    const { app, runner } = build(ghOk);
+    await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { owner: 'richsmon', repo: 'brain-intake', pr: 13 },
+    });
+    const prompt = runner.started[0]!.meta.prompt;
+    expect(prompt).toContain('gh pr view 13 --repo richsmon/brain-intake');
+    expect(prompt).toContain('gh pr diff 13 --repo richsmon/brain-intake');
+    expect(prompt).toContain('READ-ONLY');
+    expect(prompt).toContain('never post comments');
+    expect(prompt).toContain('never push');
   });
 
   test('missing personal checkout 409s under the personal root (MC-R2)', async () => {
@@ -443,6 +439,29 @@ describe('POST /reviews', () => {
     expect(runner.started).toHaveLength(0);
   });
 
+  test('model defaults like the sessions route when omitted', async () => {
+    const { app, runner } = build(ghOk);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { owner: 'richsmon', repo: 'brain-intake', pr: 13 },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(runner.started[0]!.opts).toEqual({ model: 'claude-sonnet-5', permissionMode: 'gated' });
+  });
+
+  test('unknown owner ⇒ 400 — prototype keys included', async () => {
+    const { app, runner } = build(ghOk);
+    const bad = async (owner: string) =>
+      (await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { owner, repo: 'app', pr: 90 } }))
+        .statusCode;
+    expect(await bad('acme')).toBe(400);
+    expect(await bad('constructor')).toBe(400);
+    expect(await bad('__proto__')).toBe(400);
+    expect(runner.started).toHaveLength(0);
+  });
+
   test('invalid repo name or pr ⇒ 400 (path-traversal names included)', async () => {
     const { app } = build(ghOk);
     const bad = async (payload: Record<string, unknown>) =>
@@ -456,11 +475,163 @@ describe('POST /reviews', () => {
     expect(await bad({ owner: 'richsmon', repo: '../universal-brain', pr: 35 })).toBe(400);
   });
 
-  test('model defaults like the sessions route when omitted', async () => {
-    const { app, runner } = build(ghOk);
-    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+  test('repo without a local checkout ⇒ 409 with the expected path — never clones, never preps a worktree', async () => {
+    const { app, runner, checkoutRoot, gitCalls } = build(ghOk);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { repo: 'platform', pr: 94 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain('no local checkout for market-clue/platform');
+    expect(res.json().error).toContain(join(checkoutRoot, 'platform'));
+    expect(runner.started).toHaveLength(0);
+    expect(gitCalls).toHaveLength(0);
+  });
+});
+
+describe('POST /reviews — full MC flow (MC-R6)', () => {
+  test('launches an acceptEdits session INSIDE a fresh worktree at the PR head', async () => {
+    const { app, store, runner, checkoutRoot, worktreeBase, gitCalls } = build(ghOk);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { repo: 'app', pr: 90, model: 'claude-opus-4-8', effort: 'high' },
+    });
     expect(res.statusCode).toBe(201);
-    expect(runner.started[0]!.opts).toEqual({ model: 'claude-sonnet-5', permissionMode: 'gated' });
+    const { sessionId } = res.json();
+    expect(store.has(sessionId)).toBe(true);
+
+    expect(runner.started).toHaveLength(1);
+    const { meta, opts } = runner.started[0]!;
+    const wtPath = meta.repoPath;
+
+    // The worktree is unique, under the configured base, and IS the session cwd.
+    expect(wtPath.startsWith(join(worktreeBase, 'mc-review-app-pr-90-'))).toBe(true);
+    expect(wtPath).not.toBe(join(checkoutRoot, 'app'));
+
+    // Worktree prepared before the session: fetch the PR head, add detached.
+    const appCheckout = join(checkoutRoot, 'app');
+    expect(gitCalls).toEqual([
+      ['-C', appCheckout, 'fetch', 'origin', 'login-pages'],
+      ['-C', appCheckout, 'worktree', 'add', '--detach', wtPath, 'FETCH_HEAD'],
+    ]);
+
+    expect(meta.repo).toBe('market-clue/app');
+    expect(meta.permissionMode).toBe('acceptEdits');
+    expect(meta.review).toEqual({ owner: 'market-clue', repo: 'app', pr: 90 });
+    expect(opts).toMatchObject({ model: 'claude-opus-4-8', permissionMode: 'acceptEdits', effort: 'high' });
+  });
+
+  test('the session-scoped allowlist extension carries the EXACT prefixes for this one review', async () => {
+    const { app, runner, checkoutRoot } = build(ghOk);
+    await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    const { meta, opts } = runner.started[0]!;
+    const wt = meta.repoPath;
+    const mb = join(checkoutRoot, 'brain');
+    expect((opts as { extraBashAllowlist: string[] }).extraBashAllowlist).toEqual([
+      `git -C ${wt} add`,
+      `git -C ${wt} commit`,
+      `git -C ${wt} push`,
+      `git -C ${wt} switch`,
+      `git -C ${mb} status`,
+      `git -C ${mb} diff`,
+      `git -C ${mb} log`,
+      `git -C ${mb} fetch`,
+      `git -C ${mb} switch`,
+      `git -C ${mb} add`,
+      `git -C ${mb} commit`,
+      `git -C ${mb} push`,
+      `gh pr create --repo market-clue/brain`,
+      `gh pr comment 90 --repo market-clue/app`,
+      `gh pr review 90 --repo market-clue/app`,
+    ]);
+  });
+
+  test('worktree is removed server-side on the FIRST terminal transition, exactly once', async () => {
+    const { app, store, runner, checkoutRoot, gitCalls } = build(ghOk);
+    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    const { sessionId } = res.json();
+    const wtPath = runner.started[0]!.meta.repoPath;
+    const appCheckout = join(checkoutRoot, 'app');
+    const removals = () =>
+      gitCalls.filter((c) => c.includes('remove')).map((c) => c.slice(2));
+
+    // Non-terminal statuses never reap.
+    store.appendEvent(sessionId, { event: 'status', status: 'running' });
+    store.appendEvent(sessionId, { event: 'status', status: 'waiting-approval' });
+    await new Promise((r) => setImmediate(r));
+    expect(removals()).toHaveLength(0);
+
+    // First terminal transition reaps…
+    store.appendEvent(sessionId, { event: 'status', status: 'done' });
+    await new Promise((r) => setImmediate(r));
+    expect(gitCalls).toContainEqual(['-C', appCheckout, 'worktree', 'remove', '--force', wtPath]);
+    expect(removals()).toHaveLength(1);
+
+    // …and only the first — later events change nothing.
+    store.appendEvent(sessionId, { event: 'status', status: 'done' });
+    await new Promise((r) => setImmediate(r));
+    expect(removals()).toHaveLength(1);
+  });
+
+  test('paused and error count as terminal for worktree cleanup too', async () => {
+    for (const status of ['paused', 'error']) {
+      const { app, store, runner, gitCalls } = build(ghOk);
+      const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+      const { sessionId } = res.json();
+      const wtPath = runner.started[0]!.meta.repoPath;
+      store.appendEvent(sessionId, { event: 'status', status });
+      await new Promise((r) => setImmediate(r));
+      expect(gitCalls.some((c) => c.includes('remove') && c.includes(wtPath))).toBe(true);
+    }
+  });
+
+  test('missing MC brain checkout ⇒ 409, nothing launched, no worktree', async () => {
+    const { app, runner, checkoutRoot, gitCalls } = build(ghOk, { mcBrain: false });
+    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain('no local checkout of the MC brain');
+    expect(res.json().error).toContain(join(checkoutRoot, 'brain'));
+    expect(runner.started).toHaveLength(0);
+    expect(gitCalls).toHaveLength(0);
+  });
+
+  test('gh headRefName failure ⇒ 502, no session created', async () => {
+    const gh: GhRunner = (args) =>
+      args[0] === 'pr' ? Promise.reject(new Error('gh pr view failed')) : Promise.resolve(graphqlPayload(PR_NODES));
+    const { app, store, runner } = build(gh);
+    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toContain('worktree setup failed');
+    expect(runner.started).toHaveLength(0);
+    expect(store.listSessions()).toHaveLength(0);
+  });
+
+  test('worktree add failure ⇒ 502, no session created', async () => {
+    const { app, store, runner } = build(ghOk, { git: () => Promise.reject(new Error('worktree add exploded')) });
+    const res = await app.inject({ method: 'POST', url: '/reviews', headers: AUTH, payload: { repo: 'app', pr: 90 } });
+    expect(res.statusCode).toBe(502);
+    expect(runner.started).toHaveLength(0);
+    expect(store.listSessions()).toHaveLength(0);
+  });
+
+  test('a launched full review immediately shows as lastReview on its PR row (MC-R3 round-trip)', async () => {
+    const { app } = build(ghOk);
+    const post = await app.inject({
+      method: 'POST',
+      url: '/reviews',
+      headers: AUTH,
+      payload: { repo: 'app', pr: 90 },
+    });
+    const { sessionId } = post.json();
+
+    const res = await app.inject({ method: 'GET', url: '/reviews/prs', headers: AUTH });
+    const row = res.json().find((r: { owner: string; number: number }) => r.owner === 'market-clue' && r.number === 90);
+    expect(row.lastReview).toMatchObject({ sessionId, state: 'created' });
+    expect(typeof row.lastReview.ts).toBe('string');
   });
 });
 
@@ -479,5 +650,78 @@ describe('buildReviewPrompt', () => {
     expect(prompt).toContain('"severity": "high" | "medium" | "low"');
     expect(prompt).toContain('LAST thing in the message');
     expect(prompt).toContain('{"verdict": "approve", "findings": []}');
+  });
+});
+
+describe('buildFullReviewPrompt (MC-R6)', () => {
+  const input = {
+    owner: 'market-clue',
+    repo: 'platform',
+    pr: 94,
+    branch: 'MC-74/dashboard-aggregation-hardening',
+    worktreePath: '/wts/mc-review-platform-pr-94-ab12cd34',
+    mcBrainPath: '/checkouts/market-clue/brain',
+  };
+  const prompt = buildFullReviewPrompt(input);
+
+  test('pins the session to the worktree and the MC brain checkout, and forbids everything else', () => {
+    expect(prompt).toContain('FULL code review of pull request #94 in market-clue/platform');
+    expect(prompt).toContain('/wts/mc-review-platform-pr-94-ab12cd34');
+    expect(prompt).toContain('/checkouts/market-clue/brain');
+    expect(prompt).toContain('Touch NOTHING outside the worktree');
+    expect(prompt).toContain("never modify this PR's source branch");
+    expect(prompt).toContain('never merge');
+  });
+
+  test('restates the richsmon identity rule hard — human-authored, signed, zero AI traces', () => {
+    expect(prompt).toContain('MUST read as authored by richsmon');
+    expect(prompt).toContain('ZERO mentions of AI, Claude, agents or assistants');
+    expect(prompt).toContain('NO Co-Authored-By');
+    expect(prompt).toContain('signed automatically');
+    expect(prompt).toContain('never touch git config');
+  });
+
+  test('encodes the brain-pr-review doc conventions: MC-key resolution, doc path, fallbacks', () => {
+    expect(prompt).toContain('MC Story key');
+    expect(prompt).toContain('first from the branch name');
+    expect(prompt).toContain('workspaces/{workspace}/features/{feature}/reviews/{MC-key}--platform-pr-94.md');
+    expect(prompt).toContain('workspaces/{workspace}/reviews/');
+    expect(prompt).toContain('keyless lane');
+    expect(prompt).toContain('grep -rl "MC-{n}" workspaces/*/features/*/plan.md');
+  });
+
+  test('opens the brain PR on the mc-review branch from origin/main and never merges it', () => {
+    expect(prompt).toContain('mc-review/platform-pr-94');
+    expect(prompt).toContain('switch -c mc-review/platform-pr-94 origin/main');
+    expect(prompt).toContain('gh pr create --repo market-clue/brain');
+    expect(prompt).toContain('Do NOT merge it');
+  });
+
+  test('platform feedback is verdict-conditional — approve ONLY on an approve verdict', () => {
+    expect(prompt).toContain('STRICTLY verdict-conditional');
+    expect(prompt).toContain('Verdict approve ⇒ `gh pr review 94 --repo market-clue/platform --approve');
+    expect(prompt).toContain('Approve ONLY on a genuine approve verdict');
+    expect(prompt).toContain('hollow approve is worse than none');
+    expect(prompt).toContain('Verdict request-changes ⇒ `gh pr review 94 --repo market-clue/platform --request-changes');
+    expect(prompt).toContain('Verdict comment ⇒ `gh pr review 94 --repo market-clue/platform --comment');
+    expect(prompt).toContain('gh pr comment 94 --repo market-clue/platform --body');
+  });
+
+  test('keeps the findings-json tail and demands the Brain PR line before it', () => {
+    expect(prompt).toContain('```findings-json');
+    expect(prompt).toContain('"verdict": "approve" | "request-changes" | "comment"');
+    expect(prompt).toContain('LAST thing in the message');
+    expect(prompt).toContain('Brain PR: <url>');
+    expect(prompt).toContain('the `Brain PR:` line comes BEFORE it');
+  });
+
+  test('every git/gh command the brief prescribes passes the session allowlist (default + scoped extension)', () => {
+    const allow = [...DEFAULT_BASH_ALLOWLIST, ...fullReviewBashAllowlist(input)];
+    const commands = [...prompt.matchAll(/`((?:git|gh) [^`]+)`/g)].map((m) => m[1]!);
+    expect(commands.length).toBeGreaterThan(8);
+    for (const command of commands) {
+      const passes = allow.some((prefix) => command === prefix || command.startsWith(`${prefix} `));
+      expect(passes, `not allowlisted: ${command}`).toBe(true);
+    }
   });
 });
