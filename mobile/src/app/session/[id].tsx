@@ -1,7 +1,7 @@
 // BI-C2 session detail — the phone-side cockpit for one coding session: chat
 // transcript from the JSONL event log, Edit diff cards and Bash command cards,
-// a sticky Approve/Deny bar while a gate is waiting, the gated⇄acceptEdits
-// switch, a follow-up message input, and the final summary + per-file diff
+// a sticky Approve/Deny bar while a gate is waiting, the mode switch
+// (gated / acceptEdits / auto), a follow-up message input, and the final summary + per-file diff
 // stat on done. The screen POLLS events.json with the offset contract while
 // focused; every re-focus replays from 0, so kill/reopen shows the full
 // history with no gaps.
@@ -26,6 +26,7 @@ import { getSessionsApi } from "../../lib/brain";
 import { diffForTool, diffStat, isEditTool, toolFilePath, type DiffLine } from "../../lib/diff";
 import {
   isTerminal,
+  PERMISSION_MODES,
   startEventsPoll,
   type PermissionMode,
   type SessionEvent,
@@ -66,6 +67,10 @@ function input(v: unknown): Record<string, unknown> {
   return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
 }
 
+function toPermissionMode(v: string): PermissionMode {
+  return v === "acceptEdits" || v === "auto" ? v : "gated";
+}
+
 /** Fold the raw event log into renderable items + live control state. */
 export function deriveSession(events: SessionEvent[]): Derived {
   const decisions = new Map<string, string>();
@@ -89,7 +94,7 @@ export function deriveSession(events: SessionEvent[]): Derived {
         state = (str(e.status) || state) as SessionState;
         if (meta === null && typeof e.repo === "string") {
           meta = { repo: str(e.repo), model: str(e.model), permissionMode: str(e.permissionMode) };
-          mode = str(e.permissionMode) === "acceptEdits" ? "acceptEdits" : "gated";
+          mode = toPermissionMode(str(e.permissionMode));
         }
         break;
       }
@@ -133,7 +138,7 @@ export function deriveSession(events: SessionEvent[]): Derived {
         break;
       }
       case "mode":
-        mode = str(e.mode) === "acceptEdits" ? "acceptEdits" : "gated";
+        mode = toPermissionMode(str(e.mode));
         items.push({ type: "sys", key, text: `mode → ${str(e.mode)}` });
         break;
       case "result":
@@ -279,7 +284,7 @@ export default function SessionDetailScreen() {
 
         <View style={styles.modeRow}>
           <Text style={[styles.fieldLabel, { color: colors.ink3 }]}>Mode</Text>
-          {(["gated", "acceptEdits"] as PermissionMode[]).map((m) => {
+          {PERMISSION_MODES.map((m) => {
             const activeMode = derived.mode === m;
             return (
               <Pressable

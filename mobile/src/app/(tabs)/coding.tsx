@@ -23,7 +23,13 @@ import { EmptyState } from "../../components/ds/empty-state";
 import { ScreenHeader } from "../../components/ds/screen-header";
 import { SessionStateChip } from "../../components/ds/session-state-chip";
 import { getSessionsApi } from "../../lib/brain";
-import type { PermissionMode, SessionSummary, SessionsMeta } from "../../lib/sessions";
+import {
+  PERMISSION_MODES,
+  permissionModeLabel,
+  type PermissionMode,
+  type SessionSummary,
+  type SessionsMeta,
+} from "../../lib/sessions";
 import { useTheme } from "../../theme";
 import { fonts, labelTracking, radii, spacing, typeScale } from "../../theme/tokens";
 
@@ -168,9 +174,9 @@ function NewSessionSheet({
 
             <PickerRow
               label="Mode"
-              options={["gated", "acceptEdits"] as PermissionMode[]}
+              options={[...PERMISSION_MODES]}
               selected={mode}
-              labelFor={(m) => (m === "gated" ? "gated (approve edits)" : "acceptEdits")}
+              labelFor={permissionModeLabel}
               onSelect={setMode}
             />
 

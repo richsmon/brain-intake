@@ -133,6 +133,11 @@ describe('shouldGate', () => {
   test('read-only tools never gate', () => {
     expect(shouldGate('Read', { file_path: 'a.ts' }, 'gated', allow)).toBe(false);
   });
+  test('auto: nothing gates — edits and Bash outside the allowlist both pass', () => {
+    expect(shouldGate('Edit', { file_path: 'a.ts' }, 'auto', allow)).toBe(false);
+    expect(shouldGate('Write', { file_path: 'a.ts' }, 'auto', allow)).toBe(false);
+    expect(shouldGate('Bash', { command: 'rm -rf /' }, 'auto', allow)).toBe(false);
+  });
 });
 
 describe('runner — happy path (no gates)', () => {
@@ -152,6 +157,61 @@ describe('runner — happy path (no gates)', () => {
     expect(events).toContain('tool_call');
     expect(events).not.toContain('permission_request');
     expect(store.readEvents(id).some((e) => e.event === 'chat_chunk' && e.text === 'all clean')).toBe(true);
+    expect(store.listSessions()[0]!.state).toBe('done');
+  });
+});
+
+describe('runner — auto mode (BI-C4)', () => {
+  test('edits and non-allowlisted Bash run straight through: no permission_request, no waiting', async () => {
+    const store = tmpStore();
+    const id = store.createSession({ ...META, permissionMode: 'auto' });
+    const results: string[] = [];
+    const { sdk } = fakeSdk(async ({ canUseTool, emit }) => {
+      const e = await canUseTool('Edit', { file_path: 'src/login.ts', new_string: 'fixed' }, {});
+      results.push(`edit:${e.behavior}`);
+      const b = await canUseTool('Bash', { command: 'rm -rf build' }, {});
+      results.push(`bash:${b.behavior}`);
+      emit(text('all done, no questions asked'));
+      emit(ok());
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: ['git status'], approvalTimeoutMs: 20 });
+    await runner.run(id, { ...META, permissionMode: 'auto' }, { permissionMode: 'auto' });
+
+    expect(results).toEqual(['edit:allow', 'bash:allow']);
+    const events = store.readEvents(id).map((e) => e.event);
+    expect(events).toContain('tool_call'); // the trail survives auto mode
+    expect(events).not.toContain('permission_request');
+    expect(events).not.toContain('permission_resolved');
+    expect(store.listSessions()[0]!.state).toBe('done');
+  });
+
+  test('mid-run flip to auto records the mode event and stops all gating', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const results: string[] = [];
+    const { sdk, setModes } = fakeSdk(async ({ canUseTool, readMessage, emit }) => {
+      await readMessage(); // initial prompt
+      await readMessage(); // waits for sendMessage — mode is flipped before this resolves
+      const e = await canUseTool('Edit', { file_path: 'a.ts' }, {});
+      results.push(`edit:${e.behavior}`);
+      const b = await canUseTool('Bash', { command: 'rm -rf build' }, {});
+      results.push(`bash:${b.behavior}`);
+      emit(ok());
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    const runPromise = runner.run(id, META);
+
+    await vi.waitFor(() => expect(runner.isActive(id)).toBe(true));
+    expect(await runner.setMode(id, 'auto')).toBe(true);
+    expect(runner.sendMessage(id, 'go ahead')).toBe(true);
+    await runPromise;
+
+    expect(results).toEqual(['edit:allow', 'bash:allow']);
+    // Our `auto` maps to the SDK's `default` — the pass-through lives in our gate.
+    expect(setModes).toEqual(['default']);
+    const events = store.readEvents(id);
+    expect(events.some((e) => e.event === 'mode' && e.mode === 'auto')).toBe(true);
+    expect(events.some((e) => e.event === 'permission_request')).toBe(false);
     expect(store.listSessions()[0]!.state).toBe('done');
   });
 });

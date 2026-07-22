@@ -5,13 +5,14 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { SessionModel } from '../config.js';
 import type { PushTokenStore } from '../push/tokens.js';
+import type { SessionPermissionMode } from './runner.js';
 import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 
 export interface SessionRunnerLike {
-  run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: 'gated' | 'acceptEdits' }): Promise<void>;
+  run(id: string, meta: SessionMeta, opts?: { model?: string; effort?: string; permissionMode?: SessionPermissionMode }): Promise<void>;
   approve(id: string, requestId: string): boolean;
   deny(id: string, requestId: string, message?: string): boolean;
-  setMode(id: string, mode: 'gated' | 'acceptEdits'): Promise<boolean>;
+  setMode(id: string, mode: SessionPermissionMode): Promise<boolean>;
   sendMessage(id: string, text: string): boolean;
 }
 
@@ -35,7 +36,7 @@ interface PostSessionBody {
   permissionMode?: unknown;
 }
 
-const MODES = new Set(['gated', 'acceptEdits']);
+const MODES = new Set<string>(['gated', 'acceptEdits', 'auto'] satisfies SessionPermissionMode[]);
 
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
   const { store, runner, repoAllowlist, token, models, efforts, pushTokens } = config;
@@ -60,9 +61,9 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
         return reply.code(400).send({ error: `unknown repo: ${repo || '(none)'}` });
       }
       const model = typeof body.model === 'string' ? body.model : 'claude-sonnet-5';
-      const permissionMode: 'gated' | 'acceptEdits' =
+      const permissionMode: SessionPermissionMode =
         typeof body.permissionMode === 'string' && MODES.has(body.permissionMode)
-          ? (body.permissionMode as 'gated' | 'acceptEdits')
+          ? (body.permissionMode as SessionPermissionMode)
           : 'gated';
       const effort = typeof body.effort === 'string' ? body.effort : undefined;
 
@@ -168,8 +169,8 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
       async (req, reply) => {
         if (!store.has(req.params.id)) return reply.code(404).send({ error: 'unknown session' });
         const mode = typeof req.body?.mode === 'string' ? req.body.mode : '';
-        if (!MODES.has(mode)) return reply.code(400).send({ error: 'mode must be gated or acceptEdits' });
-        if (!(await runner.setMode(req.params.id, mode as 'gated' | 'acceptEdits'))) {
+        if (!MODES.has(mode)) return reply.code(400).send({ error: 'mode must be gated, acceptEdits or auto' });
+        if (!(await runner.setMode(req.params.id, mode as SessionPermissionMode))) {
           return reply.code(409).send({ error: 'session is not running' });
         }
         return { ok: true };

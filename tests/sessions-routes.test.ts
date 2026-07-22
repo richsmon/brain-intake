@@ -37,7 +37,7 @@ class FakeRunner implements SessionRunnerLike {
     this.denials.push(requestId);
     return this.approveResult;
   }
-  setMode(_id: string, mode: 'gated' | 'acceptEdits'): Promise<boolean> {
+  setMode(_id: string, mode: 'gated' | 'acceptEdits' | 'auto'): Promise<boolean> {
     this.modes.push(mode);
     return Promise.resolve(this.setModeResult);
   }
@@ -97,6 +97,32 @@ describe('POST /sessions', () => {
     expect(runner.started).toHaveLength(1);
     expect(runner.started[0]!.id).toBe(id);
     expect(store.readEvents(id)[0]).toMatchObject({ event: 'status', status: 'created', repo: 'gotam' });
+  });
+
+  test('accepts permissionMode auto and hands it to the runner (BI-C4)', async () => {
+    const { app, store, runner } = build();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: AUTH,
+      payload: { repo: 'gotam', prompt: 'ship it', permissionMode: 'auto' },
+    });
+    expect(res.statusCode).toBe(201);
+    const { id } = res.json();
+    expect(runner.started[0]!.opts).toMatchObject({ permissionMode: 'auto' });
+    expect(store.readEvents(id)[0]).toMatchObject({ event: 'status', status: 'created', permissionMode: 'auto' });
+  });
+
+  test('an unknown permissionMode falls back to gated', async () => {
+    const { app, runner } = build();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: AUTH,
+      payload: { repo: 'gotam', prompt: 'x', permissionMode: 'yolo' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(runner.started[0]!.opts).toMatchObject({ permissionMode: 'gated' });
   });
 
   test('unknown repo ⇒ 400; missing prompt ⇒ 400', async () => {
@@ -276,6 +302,12 @@ describe('approve / deny / mode / message', () => {
         .statusCode,
     ).toBe(200);
     expect(runner.modes).toEqual(['acceptEdits']);
+    // BI-C4: the mid-session flip accepts auto too.
+    expect(
+      (await app.inject({ method: 'POST', url: `/sessions/${id}/mode`, headers: AUTH, payload: { mode: 'auto' } }))
+        .statusCode,
+    ).toBe(200);
+    expect(runner.modes).toEqual(['acceptEdits', 'auto']);
     expect(
       (await app.inject({ method: 'POST', url: `/sessions/${id}/mode`, headers: AUTH, payload: { mode: 'bogus' } }))
         .statusCode,

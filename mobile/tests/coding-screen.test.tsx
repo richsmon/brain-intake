@@ -132,11 +132,37 @@ describe("CodingScreen", () => {
     });
   });
 
+  it("creates an auto-mode session when the third mode chip is picked (BI-C4)", async () => {
+    await renderCoding();
+    await fireEvent.press(await screen.findByText("+ New"));
+    await screen.findByText("New Session");
+
+    const repoChips = screen.getAllByText("gotam");
+    await fireEvent.press(repoChips[repoChips.length - 1]);
+    await fireEvent.changeText(
+      screen.getByPlaceholderText("What should the agent do?"),
+      "refactor without asking",
+    );
+    await fireEvent.press(screen.getByText("auto (no gates)"));
+    await fireEvent.press(screen.getByText("Start session"));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate).toHaveBeenCalledWith({
+      repo: "gotam",
+      prompt: "refactor without asking",
+      model: "claude-fable-5",
+      permissionMode: "auto",
+    });
+  });
+
   it("defaults to gated mode and requires repo + prompt before starting", async () => {
     await renderCoding();
     await fireEvent.press(await screen.findByText("+ New"));
     await screen.findByText("New Session");
     expect(screen.getByText("gated (approve edits)")).toBeOnTheScreen();
+    // All three modes are on offer; gated stays the default.
+    expect(screen.getByText("acceptEdits")).toBeOnTheScreen();
+    expect(screen.getByText("auto (no gates)")).toBeOnTheScreen();
 
     // No repo, no prompt — start must be inert.
     await fireEvent.press(screen.getByText("Start session"));

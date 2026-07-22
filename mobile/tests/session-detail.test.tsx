@@ -151,6 +151,17 @@ describe("SessionDetailScreen", () => {
     );
   });
 
+  it("mode switch offers auto and flips a running session to it (BI-C4)", async () => {
+    mockState = "running";
+    mockEvents = [created, { index: 1, event: "status", status: "running" }];
+    await renderDetail();
+    await screen.findByText("gated");
+    await fireEvent.press(screen.getByText("auto"));
+    await waitFor(() =>
+      expect(mockSetMode).toHaveBeenCalledWith("2026-07-22-abcd1234", "auto"),
+    );
+  });
+
   it("done sessions show the final summary and the per-file diff stat; no input bar", async () => {
     mockState = "done";
     mockEvents = [
@@ -203,6 +214,22 @@ describe("deriveSession", () => {
     expect(derived.pending).toBeNull();
     // The gated tool_call collapses into the gate card — no duplicate tool card.
     expect(derived.items.filter((i) => i.type === "tool")).toHaveLength(0);
+  });
+
+  it("tracks auto mode from the created meta and from mode events (BI-C4)", () => {
+    const startedAuto = deriveSession([
+      { ...created, permissionMode: "auto" },
+      { index: 1, event: "status", status: "running" },
+    ]);
+    expect(startedAuto.mode).toBe("auto");
+
+    const flipped = deriveSession([
+      created,
+      { index: 1, event: "status", status: "running" },
+      { index: 2, event: "mode", mode: "auto" },
+    ]);
+    expect(flipped.mode).toBe("auto");
+    expect(flipped.items.some((i) => i.type === "sys" && i.text === "mode → auto")).toBe(true);
   });
 
   it("pending stays null unless the session is actually waiting", () => {
