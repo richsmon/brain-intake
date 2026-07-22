@@ -11,9 +11,11 @@ import {
   formatUsageLine,
   isTerminal,
   makeSessionsApi,
+  parseFindingsPayload,
   parseUsage,
   permissionModeLabel,
   startEventsPoll,
+  stripFindingsBlock,
   type EventsPage,
 } from "../src/lib/sessions";
 
@@ -205,6 +207,83 @@ describe("formatReviewedLine (MC-R3)", () => {
     expect(
       formatReviewedLine({ sessionId: "s4", ts: "2026-07-22T11:00:00Z", state: "waiting-approval" }, now),
     ).toBe("reviewed 1h ago · waiting");
+  });
+
+  it("verdict + finding count replace the bare state once findings exist (MC-R4)", () => {
+    const base = { sessionId: "s5", ts: "2026-07-22T10:00:00Z", state: "done" as const, outcome: "success" as const };
+    expect(
+      formatReviewedLine(
+        { ...base, findings: { verdict: "request-changes", counts: { high: 2, medium: 0, low: 1 }, total: 3 } },
+        now,
+      ),
+    ).toBe("reviewed 2h ago · request-changes · 3 findings");
+    expect(
+      formatReviewedLine(
+        { ...base, findings: { verdict: "comment", counts: { high: 0, medium: 1, low: 0 }, total: 1 } },
+        now,
+      ),
+    ).toBe("reviewed 2h ago · comment · 1 finding");
+    // A clean approve reads as the verdict alone — "0 findings" is noise.
+    expect(
+      formatReviewedLine(
+        { ...base, findings: { verdict: "approve", counts: { high: 0, medium: 0, low: 0 }, total: 0 } },
+        now,
+      ),
+    ).toBe("reviewed 2h ago · approve");
+    // findings: null (review done, block unparseable) keeps the MC-R3 line.
+    expect(formatReviewedLine({ ...base, findings: null }, now)).toBe("reviewed 2h ago · done");
+  });
+});
+
+describe("parseFindingsPayload (MC-R4)", () => {
+  it("accepts the server's findings shape and keeps optional file/line", () => {
+    expect(
+      parseFindingsPayload({
+        verdict: "request-changes",
+        findings: [
+          { severity: "high", file: "src/a.ts", line: 3, title: "Bug", detail: "Fix it." },
+          { severity: "low", title: "Nit", detail: "" },
+        ],
+      }),
+    ).toEqual({
+      verdict: "request-changes",
+      findings: [
+        { severity: "high", file: "src/a.ts", line: 3, title: "Bug", detail: "Fix it." },
+        { severity: "low", title: "Nit", detail: "" },
+      ],
+    });
+    expect(parseFindingsPayload({ verdict: "approve", findings: [] })).toEqual({ verdict: "approve", findings: [] });
+  });
+
+  it("rejects malformed payloads with null and drops malformed entries/fields", () => {
+    expect(parseFindingsPayload(null)).toBeNull();
+    expect(parseFindingsPayload(undefined)).toBeNull();
+    expect(parseFindingsPayload("approve")).toBeNull();
+    expect(parseFindingsPayload({ verdict: "ship-it", findings: [] })).toBeNull();
+    expect(parseFindingsPayload({ verdict: "approve" })).toBeNull();
+    expect(
+      parseFindingsPayload({
+        verdict: "comment",
+        findings: [
+          { severity: "blocker", title: "wrong vocab", detail: "" },
+          { severity: "medium", title: "", detail: "empty title" },
+          { severity: "medium", file: 9, line: "x", title: "kept without file/line", detail: "d" },
+        ],
+      }),
+    ).toEqual({
+      verdict: "comment",
+      findings: [{ severity: "medium", title: "kept without file/line", detail: "d" }],
+    });
+  });
+});
+
+describe("stripFindingsBlock (MC-R4)", () => {
+  it("removes the fenced findings-json tail and trims", () => {
+    const text = 'Review prose here.\n\n```findings-json\n{"verdict": "approve", "findings": []}\n```';
+    expect(stripFindingsBlock(text)).toBe("Review prose here.");
+  });
+  it("leaves block-less text untouched", () => {
+    expect(stripFindingsBlock("Just a summary.")).toBe("Just a summary.");
   });
 });
 

@@ -224,6 +224,58 @@ describe("SessionDetailScreen", () => {
     expect(screen.getByText("1.2k in · 340 out · 88k cached · $0.43")).toBeOnTheScreen();
   });
 
+  it("a done review renders verdict + severity-grouped finding cards, block stripped from prose (MC-R4)", async () => {
+    mockState = "done";
+    mockEvents = [
+      { ...created, review: { owner: "market-clue", repo: "app", pr: 90 } },
+      { index: 1, event: "status", status: "running" },
+      {
+        index: 2,
+        event: "result",
+        outcome: "success",
+        summary:
+          'Two problems worth fixing.\n\n```findings-json\n{"verdict": "request-changes", "findings": []}\n```',
+        // Served events.json decorates review results with parsed findings.
+        findings: {
+          verdict: "request-changes",
+          findings: [
+            { severity: "low", title: "Comment typo", detail: "recieve → receive" },
+            { severity: "high", file: "src/auth.ts", line: 12, title: "Token logged", detail: "Redact the token." },
+            { severity: "medium", title: "Missing test", detail: "Cover the 401 path." },
+          ],
+        },
+      },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    expect(await screen.findByText("request-changes")).toBeOnTheScreen();
+    expect(screen.getByText("3 findings")).toBeOnTheScreen();
+    expect(screen.getByText("Token logged")).toBeOnTheScreen();
+    expect(screen.getByText("src/auth.ts:12")).toBeOnTheScreen();
+    expect(screen.getByText("Redact the token.")).toBeOnTheScreen();
+    expect(screen.getByText("Comment typo")).toBeOnTheScreen();
+    // Severity groups order high → medium → low regardless of arrival order.
+    const titles = ["Token logged", "Missing test", "Comment typo"];
+    const rendered = screen.getAllByText(/Token logged|Missing test|Comment typo/).map((n) => n.props.children);
+    expect(rendered).toEqual(titles);
+    // The prose stays, the raw fenced block does not.
+    expect(screen.getByText("Two problems worth fixing.")).toBeOnTheScreen();
+    expect(screen.queryByText(/findings-json/)).toBeNull();
+  });
+
+  it("a review result without parseable findings keeps the raw summary — current behavior (MC-R4)", async () => {
+    mockState = "done";
+    mockEvents = [
+      { ...created, review: { owner: "market-clue", repo: "app", pr: 90 } },
+      { index: 1, event: "status", status: "running" },
+      { index: 2, event: "result", outcome: "success", summary: "Looks fine overall.", findings: null },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    expect(await screen.findByText("Looks fine overall.")).toBeOnTheScreen();
+    expect(screen.queryByText(/finding/)).toBeNull();
+  });
+
   it("a result without usage renders no token line (BI-C5)", async () => {
     mockState = "done";
     mockEvents = [
@@ -304,6 +356,32 @@ describe("deriveSession", () => {
     const bare = malformed.items.find((i) => i.type === "result");
     expect(bare).toBeDefined();
     expect(bare && "usage" in bare).toBe(false);
+  });
+
+  it("result items parse findings and strip the fenced block from the summary; malformed findings leave it raw (MC-R4)", () => {
+    const derived = deriveSession([
+      created,
+      {
+        index: 1,
+        event: "result",
+        outcome: "success",
+        summary: 'Prose.\n```findings-json\n{"verdict": "approve", "findings": []}\n```',
+        findings: { verdict: "approve", findings: [] },
+      },
+    ]);
+    expect(derived.items.find((i) => i.type === "result")).toMatchObject({
+      summary: "Prose.",
+      findings: { verdict: "approve", findings: [] },
+    });
+
+    // findings: null (server could not parse) ⇒ raw summary untouched, no findings key.
+    const unparsed = deriveSession([
+      created,
+      { index: 1, event: "result", outcome: "success", summary: "Raw ```findings-json broken", findings: null },
+    ]);
+    const item = unparsed.items.find((i) => i.type === "result")!;
+    expect(item).toMatchObject({ summary: "Raw ```findings-json broken" });
+    expect("findings" in item).toBe(false);
   });
 
   it("pending stays null unless the session is actually waiting", () => {

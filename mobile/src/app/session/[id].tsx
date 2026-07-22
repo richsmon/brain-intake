@@ -26,12 +26,19 @@ import { SessionStateChip } from "../../components/ds/session-state-chip";
 import { getSessionsApi } from "../../lib/brain";
 import { diffForTool, diffStat, isEditTool, toolFilePath, type DiffLine } from "../../lib/diff";
 import {
+  FINDING_SEVERITIES,
   formatUsageLine,
   isTerminal,
+  parseFindingsPayload,
   parseUsage,
   PERMISSION_MODES,
   startEventsPoll,
+  stripFindingsBlock,
+  type FindingSeverity,
   type PermissionMode,
+  type ReviewFinding,
+  type ReviewFindings,
+  type ReviewVerdict,
   type SessionEvent,
   type SessionState,
   type SessionUsage,
@@ -52,7 +59,16 @@ type Item =
       decision?: string;
     }
   | { type: "sys"; key: string; text: string }
-  | { type: "result"; key: string; outcome: string; summary?: string; usage?: SessionUsage; totalCostUsd?: number };
+  | {
+      type: "result";
+      key: string;
+      outcome: string;
+      summary?: string;
+      usage?: SessionUsage;
+      totalCostUsd?: number;
+      /** MC-R4: structured review findings the server parsed off the final message. */
+      findings?: ReviewFindings;
+    };
 
 interface Derived {
   items: Item[];
@@ -148,11 +164,18 @@ export function deriveSession(events: SessionEvent[]): Derived {
       case "result": {
         // BI-C5: per-run tokens + cost ride the result event (mirrored SDK shape).
         const usage = parseUsage(e.usage);
+        // MC-R4: review results carry server-parsed findings. When present the
+        // structured section renders them, so the raw fenced block is stripped
+        // from the summary; findings null/absent ⇒ summary shows untouched.
+        const findings = parseFindingsPayload(e.findings);
+        const rawSummary = typeof e.summary === "string" ? e.summary : null;
+        const summary = rawSummary !== null && findings !== null ? stripFindingsBlock(rawSummary) : rawSummary;
         items.push({
           type: "result",
           key,
           outcome: str(e.outcome),
-          ...(typeof e.summary === "string" ? { summary: e.summary } : {}),
+          ...(summary !== null && summary !== "" ? { summary } : {}),
+          ...(findings !== null ? { findings } : {}),
           ...(usage !== null ? { usage } : {}),
           ...(typeof e.total_cost_usd === "number" ? { totalCostUsd: e.total_cost_usd } : {}),
         });
@@ -220,6 +243,71 @@ function ToolCard({ item }: { item: Extract<Item, { type: "tool" }> }) {
         </Text>
       ) : null}
       {lines ? <DiffView lines={lines} /> : null}
+    </View>
+  );
+}
+
+// MC-R4: the findings section a done review renders instead of burying the
+// review in the transcript tail — verdict chip + severity-grouped cards.
+function useVerdictColors(verdict: ReviewVerdict): { fg: string; bg: string } {
+  const { colors } = useTheme();
+  switch (verdict) {
+    case "approve":
+      return { fg: colors.success, bg: colors.stateBecameSoft };
+    case "request-changes":
+      return { fg: colors.danger, bg: colors.stateNeedsHumanSoft };
+    case "comment":
+      return { fg: colors.accent, bg: colors.accentSoft };
+  }
+}
+
+function severityColor(colors: ReturnType<typeof useTheme>["colors"], severity: FindingSeverity): string {
+  return severity === "high" ? colors.danger : severity === "medium" ? colors.accent : colors.ink3;
+}
+
+function VerdictChip({ verdict }: { verdict: ReviewVerdict }) {
+  const { fg, bg } = useVerdictColors(verdict);
+  return (
+    <View style={[styles.verdictChip, { backgroundColor: bg, borderColor: fg }]}>
+      <Text style={[styles.verdictLabel, { color: fg }]}>{verdict}</Text>
+    </View>
+  );
+}
+
+function FindingCard({ finding }: { finding: ReviewFinding }) {
+  const { colors } = useTheme();
+  const color = severityColor(colors, finding.severity);
+  const where = finding.file !== undefined ? `${finding.file}${finding.line !== undefined ? `:${finding.line}` : ""}` : null;
+  return (
+    <View style={[styles.card, { backgroundColor: colors.bgSurface, borderColor: color }]}>
+      <View style={styles.cardHead}>
+        <Text style={[styles.mono, { color }]}>{finding.severity}</Text>
+        {where !== null ? <Text style={[styles.mono, { color: colors.ink3 }]}>{where}</Text> : null}
+      </View>
+      <Text style={[styles.findingTitle, { color: colors.ink1 }]}>{finding.title}</Text>
+      {finding.detail !== "" ? (
+        <Text style={[styles.chatText, { color: colors.ink2 }]}>{finding.detail}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function FindingsSection({ findings }: { findings: ReviewFindings }) {
+  const { colors } = useTheme();
+  const n = findings.findings.length;
+  return (
+    <View style={styles.findingsBlock}>
+      <View style={styles.findingsHead}>
+        <VerdictChip verdict={findings.verdict} />
+        <Text style={[styles.mono, { color: colors.ink3 }]}>
+          {n === 0 ? "no findings" : n === 1 ? "1 finding" : `${n} findings`}
+        </Text>
+      </View>
+      {FINDING_SEVERITIES.map((severity) =>
+        findings.findings
+          .filter((f) => f.severity === severity)
+          .map((f, i) => <FindingCard key={`${severity}-${i}`} finding={f} />),
+      )}
     </View>
   );
 }
@@ -358,6 +446,10 @@ export default function SessionDetailScreen() {
                   <Text style={[styles.mono, { color: item.outcome === "success" ? colors.stateBecame : colors.danger }]}>
                     {item.outcome === "success" ? "✦ done" : "✕ error"}
                   </Text>
+                  {/* MC-R4: structured review findings render first — the
+                      verdict and the cards ARE the review; the prose summary
+                      (block already stripped) follows underneath. */}
+                  {item.findings ? <FindingsSection findings={item.findings} /> : null}
                   {item.summary ? (
                     <Text style={[styles.chatText, { color: colors.ink1 }]}>{item.summary}</Text>
                   ) : null}
@@ -538,6 +630,30 @@ const styles = StyleSheet.create({
   },
   statBlock: {
     gap: 2,
+  },
+  findingsBlock: {
+    gap: spacing.s2,
+  },
+  findingsHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s2,
+  },
+  verdictChip: {
+    borderWidth: 1,
+    borderRadius: radii.chip,
+    paddingHorizontal: spacing.s3,
+    paddingVertical: spacing.s1,
+  },
+  verdictLabel: {
+    fontFamily: fonts.mono,
+    fontSize: typeScale.label,
+    fontWeight: "600",
+  },
+  findingTitle: {
+    fontSize: typeScale.bodySm,
+    fontWeight: "600",
+    lineHeight: typeScale.bodySm * 1.3,
   },
   stickyBar: {
     flexDirection: "row",
