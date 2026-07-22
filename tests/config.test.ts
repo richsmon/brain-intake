@@ -63,6 +63,13 @@ describe('sessions config (BI-C1)', () => {
     expect(cfg.bashAllowlist).toContain('git diff');
     expect(cfg.bashAllowlist).toContain('git log');
     expect(cfg.bashAllowlist).toContain('ls');
+    // MC-R5: read-only inspection prefixes
+    for (const prefix of ['grep', 'rg', 'cat', 'head', 'tail', 'wc', 'sed -n']) {
+      expect(cfg.bashAllowlist).toContain(prefix);
+    }
+    // MC-R5: only the read-only `sed -n` form is listed; find has no prefix-safe form
+    expect(cfg.bashAllowlist).not.toContain('sed');
+    expect(cfg.bashAllowlist).not.toContain('find');
     expect(cfg.approvalTimeoutMin).toBe(30);
     expect(cfg.sessionsToken).toBeUndefined();
   });

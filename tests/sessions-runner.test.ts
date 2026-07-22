@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
+import { DEFAULT_BASH_ALLOWLIST } from '../src/config.js';
 import { SessionStore, type StoredEvent } from '../src/sessions/store.js';
 import {
   SessionRunner,
@@ -132,6 +133,37 @@ describe('shouldGate', () => {
   });
   test('read-only tools never gate', () => {
     expect(shouldGate('Read', { file_path: 'a.ts' }, 'gated', allow)).toBe(false);
+  });
+  test('MC-R5: multi-word prefixes match on a word boundary', () => {
+    const roAllow = [...allow, 'sed -n'];
+    expect(shouldGate('Bash', { command: "sed -n '12,40p' src/config.ts" }, 'gated', roAllow)).toBe(false);
+    expect(shouldGate('Bash', { command: 'sed -n' }, 'gated', roAllow)).toBe(false);
+    // no space boundary after the prefix → no match
+    expect(shouldGate('Bash', { command: "sed -ne '1p' file" }, 'gated', roAllow)).toBe(true);
+    expect(shouldGate('Bash', { command: "sed -i '' 's/a/b/' file" }, 'gated', roAllow)).toBe(true);
+  });
+  test('MC-R5: default allowlist passes read-only inspection, still gates mutating forms', () => {
+    const reads = [
+      'grep -rn "loadConfig" src',
+      'rg --files src',
+      'cat package.json',
+      'head -50 src/config.ts',
+      'tail -20 server.log',
+      'wc -l src/config.ts',
+      "sed -n '12,40p' src/config.ts",
+    ];
+    for (const command of reads) {
+      expect(shouldGate('Bash', { command }, 'gated', DEFAULT_BASH_ALLOWLIST)).toBe(false);
+    }
+    const mutating = [
+      "sed -i 's/a/b/' src/config.ts",
+      "find . -name '*.tmp' -delete",
+      'find . -type f',
+      'rm -rf node_modules',
+    ];
+    for (const command of mutating) {
+      expect(shouldGate('Bash', { command }, 'gated', DEFAULT_BASH_ALLOWLIST)).toBe(true);
+    }
   });
   test('auto: nothing gates — edits and Bash outside the allowlist both pass', () => {
     expect(shouldGate('Edit', { file_path: 'a.ts' }, 'auto', allow)).toBe(false);
