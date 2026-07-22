@@ -98,6 +98,13 @@ describe("CodingScreen", () => {
     await renderCoding();
     expect(await screen.findByText(/sessions token/i)).toBeOnTheScreen();
     expect(screen.queryByText("+ New")).toBeNull();
+    expect(screen.queryByText("Reviews")).toBeNull();
+  });
+
+  it("opens the review surface from the header (MC-R1)", async () => {
+    await renderCoding();
+    await fireEvent.press(await screen.findByText("Reviews"));
+    expect(mockPush).toHaveBeenCalledWith("/reviews");
   });
 
   it("creates a session from the sheet with repo, model, effort and mode picked", async () => {

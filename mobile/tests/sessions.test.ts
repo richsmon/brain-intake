@@ -4,6 +4,7 @@ import {
 import {
   PERMISSION_MODES,
   POLL_INTERVAL_MS,
+  formatAge,
   isTerminal,
   makeSessionsApi,
   permissionModeLabel,
@@ -95,6 +96,67 @@ describe("makeSessionsApi", () => {
   it("maps HTTP failures to ApiError", async () => {
     const { impl } = fakeFetch(401, { error: "unauthorized" });
     await expect(makeSessionsApi(BASE, "wrong", impl).list()).rejects.toThrow(ApiError);
+  });
+
+  it("reviewPrs GETs the org PR list (MC-R1)", async () => {
+    const prs = [
+      {
+        repo: "app",
+        number: 90,
+        title: "Add login flow",
+        author: "ArsenLabovich",
+        branch: "login-pages",
+        updatedAt: "2026-07-20T10:00:00Z",
+        additions: 7390,
+        deletions: 2155,
+      },
+    ];
+    const { impl, calls } = fakeFetch(200, prs);
+    expect(await makeSessionsApi(BASE, TOKEN, impl).reviewPrs()).toEqual(prs);
+    expect(calls[0].url).toBe("http://host:8787/reviews/prs");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer tok-123");
+  });
+
+  it("launchReview POSTs the pick and returns {sessionId} (MC-R1)", async () => {
+    const { impl, calls } = fakeFetch(201, { sessionId: "2026-07-22-rev1" });
+    const res = await makeSessionsApi(BASE, TOKEN, impl).launchReview({
+      repo: "platform",
+      pr: 94,
+      model: "claude-opus-4-8",
+      effort: "high",
+    });
+    expect(res).toEqual({ sessionId: "2026-07-22-rev1" });
+    expect(calls[0].url).toBe("http://host:8787/reviews");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      repo: "platform",
+      pr: 94,
+      model: "claude-opus-4-8",
+      effort: "high",
+    });
+  });
+
+  it("launchReview surfaces the no-checkout 409 as ApiError with status", async () => {
+    const { impl } = fakeFetch(409, { error: "no local checkout" });
+    const attempt = makeSessionsApi(BASE, TOKEN, impl).launchReview({
+      repo: "data",
+      pr: 1,
+      model: "claude-sonnet-5",
+    });
+    await expect(attempt).rejects.toMatchObject({ kind: "http", status: 409 });
+  });
+});
+
+describe("formatAge", () => {
+  const now = new Date("2026-07-22T12:00:00Z");
+  it("renders minutes, hours and days compactly", () => {
+    expect(formatAge("2026-07-22T11:55:00Z", now)).toBe("5m");
+    expect(formatAge("2026-07-22T09:00:00Z", now)).toBe("3h");
+    expect(formatAge("2026-07-20T11:00:00Z", now)).toBe("2d");
+  });
+  it("clamps future or invalid timestamps to 0m", () => {
+    expect(formatAge("2026-07-23T00:00:00Z", now)).toBe("0m");
+    expect(formatAge("not-a-date", now)).toBe("0m");
   });
 });
 

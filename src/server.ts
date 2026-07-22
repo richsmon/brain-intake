@@ -16,6 +16,8 @@ import { PushTokenStore } from './push/tokens.js';
 import { PushSender } from './push/sender.js';
 import { wireSessionPush } from './push/wire.js';
 import { ApnsClient, type ApnsKeyConfig, type ApnsTransport } from './push/apns.js';
+import { registerReviewRoutes } from './reviews/routes.js';
+import type { GhRunner } from './reviews/gh.js';
 
 export interface ServerConfig {
   brainRoot: string;
@@ -50,6 +52,16 @@ export interface ServerConfig {
     apns?: ApnsKeyConfig;
     /** BI-C3: test seam for the APNs HTTP/2 request. Production uses node:http2. */
     apnsTransport?: ApnsTransport;
+    /** MC-R1 review surface — rides the sessions store/runner/token, so it only
+     * exists as an extension of the coding surface. Absent ⇒ routes not mounted. */
+    reviews?: {
+      /** GitHub org whose open PRs are listed (via gh, read-only). */
+      org: string;
+      /** Local checkouts of review repos live at `{root}/{repo}`. */
+      checkoutRoot: string;
+      /** Test seam: inject a fake gh runner. Production shells out to gh. */
+      gh: GhRunner;
+    };
   };
 }
 
@@ -146,6 +158,16 @@ export function buildServer(config: ServerConfig): FastifyInstance {
       efforts: config.sessions.efforts,
       pushTokens,
     });
+    if (config.sessions.reviews) {
+      registerReviewRoutes(app, {
+        store,
+        runner,
+        token: config.sessions.token,
+        org: config.sessions.reviews.org,
+        checkoutRoot: config.sessions.reviews.checkoutRoot,
+        gh: config.sessions.reviews.gh,
+      });
+    }
   }
 
   app.post('/items', async (req, reply) => {

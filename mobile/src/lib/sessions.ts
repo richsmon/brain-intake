@@ -77,6 +77,35 @@ export interface CreateSessionInput {
   permissionMode?: PermissionMode;
 }
 
+/** MC-R1: one open PR in the review surface's org list (GET /reviews/prs). */
+export interface ReviewPr {
+  repo: string;
+  number: number;
+  title: string;
+  author: string;
+  branch: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+}
+
+/** MC-R1: POST /reviews — the server launches a review as a coding session. */
+export interface LaunchReviewInput {
+  repo: string;
+  pr: number;
+  model: string;
+  effort?: string;
+}
+
+/** Compact age for PR rows: "5m", "3h", "2d". Clamps future/invalid to "0m". */
+export function formatAge(iso: string, now: Date = new Date()): string {
+  const then = Date.parse(iso);
+  const mins = Number.isNaN(then) ? 0 : Math.max(0, Math.floor((now.getTime() - then) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  if (mins < 24 * 60) return `${Math.floor(mins / 60)}h`;
+  return `${Math.floor(mins / (24 * 60))}d`;
+}
+
 export const POLL_INTERVAL_MS = 1500;
 
 const TERMINAL_STATES: ReadonlySet<SessionState> = new Set(["done", "error", "paused"]);
@@ -153,6 +182,15 @@ export function makeSessionsApi(baseUrl: string, token: string, fetchImpl: typeo
 
     sendMessage(id: string, text: string): Promise<{ ok: boolean }> {
       return post<{ ok: boolean }>(`/sessions/${encodeURIComponent(id)}/message`, { text });
+    },
+
+    // MC-R1: review surface — same bearer token, same server, so it rides this client.
+    reviewPrs(): Promise<ReviewPr[]> {
+      return request<ReviewPr[]>("/reviews/prs");
+    },
+
+    launchReview(input: LaunchReviewInput): Promise<{ sessionId: string }> {
+      return post<{ sessionId: string }>("/reviews", { ...input });
     },
   };
 }

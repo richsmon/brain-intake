@@ -154,3 +154,23 @@ test('WHISPER_CMD flows through; absent or empty leaves it unset', () => {
   expect(loadConfig({ BRAIN_ROOT: root }).whisperCmd).toBeUndefined();
   expect(loadConfig({ BRAIN_ROOT: root, WHISPER_CMD: '' }).whisperCmd).toBeUndefined();
 });
+
+describe('review surface config (MC-R1)', () => {
+  test('defaults: market-clue org, checkouts under ~/code/market-clue', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({ BRAIN_ROOT: root });
+    expect(cfg.reviewsOrg).toBe('market-clue');
+    expect(cfg.reviewsCheckoutRoot.endsWith(join('code', 'market-clue'))).toBe(true);
+  });
+
+  test('REVIEWS_ORG and REVIEWS_CHECKOUT_ROOT override the defaults', () => {
+    const root = tmpBrain();
+    const cfg = loadConfig({
+      BRAIN_ROOT: root,
+      REVIEWS_ORG: 'acme',
+      REVIEWS_CHECKOUT_ROOT: '/srv/checkouts',
+    });
+    expect(cfg.reviewsOrg).toBe('acme');
+    expect(cfg.reviewsCheckoutRoot).toBe('/srv/checkouts');
+  });
+});
