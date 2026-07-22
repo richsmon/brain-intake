@@ -5,6 +5,7 @@ import {
   PERMISSION_MODES,
   POLL_INTERVAL_MS,
   formatAge,
+  formatReviewedLine,
   formatCost,
   formatTokenCount,
   formatUsageLine,
@@ -165,6 +166,29 @@ describe("formatAge", () => {
   it("clamps future or invalid timestamps to 0m", () => {
     expect(formatAge("2026-07-23T00:00:00Z", now)).toBe("0m");
     expect(formatAge("not-a-date", now)).toBe("0m");
+  });
+});
+
+describe("formatReviewedLine (MC-R3)", () => {
+  const now = new Date("2026-07-22T12:00:00Z");
+  it("renders age + state for the PR row's memory line", () => {
+    expect(
+      formatReviewedLine(
+        { sessionId: "s1", ts: "2026-07-22T10:00:00Z", state: "done", outcome: "success" },
+        now,
+      ),
+    ).toBe("reviewed 2h ago · done");
+    expect(formatReviewedLine({ sessionId: "s2", ts: "2026-07-22T11:58:00Z", state: "running" }, now)).toBe(
+      "reviewed 2m ago · running",
+    );
+    expect(formatReviewedLine({ sessionId: "s3", ts: "2026-07-20T12:00:00Z", state: "error", outcome: "error" }, now)).toBe(
+      "reviewed 2d ago · error",
+    );
+  });
+  it("shortens waiting-approval to waiting", () => {
+    expect(
+      formatReviewedLine({ sessionId: "s4", ts: "2026-07-22T11:00:00Z", state: "waiting-approval" }, now),
+    ).toBe("reviewed 1h ago · waiting");
   });
 });
 

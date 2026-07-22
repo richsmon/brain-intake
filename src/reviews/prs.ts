@@ -5,6 +5,12 @@
 // GitHub search ORs multiple org:/user: qualifiers in one query (verified live),
 // so it stays one call. Each row carries `owner` to disambiguate; `repo` stays
 // the short name for compatibility with the app.
+// MC-R3: each row also carries `lastReview` — the most recent review session
+// already launched against that PR (or null) — so the list remembers what was
+// reviewed. Derived from the session store via the `review` ref that POST
+// /reviews stamps into session meta; pre-MC-R3 sessions have no ref and stay
+// unlinked.
+import type { SessionSummary } from '../sessions/store.js';
 import type { GhRunner } from './gh.js';
 
 export interface ReviewPr {
@@ -17,6 +23,45 @@ export interface ReviewPr {
   updatedAt: string;
   additions: number;
   deletions: number;
+}
+
+/** MC-R3: the most recent review session launched against a PR. */
+export interface LastReview {
+  sessionId: string;
+  ts: string;
+  state: SessionSummary['state'];
+  outcome?: 'success' | 'error';
+}
+
+export interface ReviewPrRow extends ReviewPr {
+  lastReview: LastReview | null;
+}
+
+/**
+ * MC-R3: attach each PR's most recent review session. Sessions match on the
+ * `review` ref {owner, repo, pr}; the newest `createdAt` wins.
+ */
+export function attachLastReview(prs: ReviewPr[], sessions: SessionSummary[]): ReviewPrRow[] {
+  return prs.map((pr) => {
+    let last: SessionSummary | null = null;
+    for (const s of sessions) {
+      const r = s.review;
+      if (r === undefined || r.owner !== pr.owner || r.repo !== pr.repo || r.pr !== pr.number) continue;
+      if (last === null || s.createdAt > last.createdAt) last = s;
+    }
+    return {
+      ...pr,
+      lastReview:
+        last === null
+          ? null
+          : {
+              sessionId: last.id,
+              ts: last.createdAt,
+              state: last.state,
+              ...(last.outcome !== undefined ? { outcome: last.outcome } : {}),
+            },
+    };
+  });
 }
 
 const SEARCH_QUERY = `query($q:String!){

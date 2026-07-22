@@ -34,6 +34,13 @@ const mockFakeApi = {
       updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
       additions: 1534,
       deletions: 34,
+      // MC-R3: this PR already has a review session — the row remembers it.
+      lastReview: {
+        sessionId: "2026-07-22-aaaa1111",
+        ts: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        state: "done",
+        outcome: "success",
+      },
     },
     {
       owner: "richsmon",
@@ -45,6 +52,7 @@ const mockFakeApi = {
       updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
       additions: 320,
       deletions: 12,
+      lastReview: null,
     },
     {
       owner: "market-clue",
@@ -103,6 +111,33 @@ describe("ReviewsScreen", () => {
     expect(screen.getByText("-34")).toBeOnTheScreen();
     expect(screen.getByText("3h")).toBeOnTheScreen();
     expect(screen.getByText("2d")).toBeOnTheScreen();
+  });
+
+  it("marks already-reviewed PRs with a reviewed line; unreviewed rows stay clean (MC-R3)", async () => {
+    await renderReviews();
+    expect(await screen.findByText("reviewed 2h ago · done")).toBeOnTheScreen();
+    // Only platform#94 was reviewed — lastReview:null and a pre-MC-R3 server
+    // payload (field absent, app#90) both render without a line.
+    expect(screen.queryAllByText(/^reviewed /)).toHaveLength(1);
+  });
+
+  it("tapping the reviewed line opens that session directly, skipping the launch sheet (MC-R3)", async () => {
+    await renderReviews();
+    await fireEvent.press(await screen.findByText("reviewed 2h ago · done"));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/session/[id]",
+      params: { id: "2026-07-22-aaaa1111" },
+    });
+    expect(mockLaunchReview).not.toHaveBeenCalled();
+    expect(screen.queryByText("Launch Review")).not.toBeOnTheScreen();
+  });
+
+  it("a reviewed PR can still launch a NEW review from the row itself (MC-R3)", async () => {
+    await renderReviews();
+    await fireEvent.press(await screen.findByText("Harden dashboard aggregation"));
+    expect(await screen.findByText("Launch Review")).toBeOnTheScreen();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("explains the missing token instead of showing a broken list", async () => {
