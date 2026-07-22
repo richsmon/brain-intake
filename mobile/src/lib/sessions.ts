@@ -39,6 +39,18 @@ export interface SessionEvent {
   [key: string]: unknown;
 }
 
+/**
+ * BI-C5: per-run token usage mirrored from the server's `result` event, which
+ * mirrors the Agent SDK result message — snake_case field names on purpose so
+ * nothing along the chain ever re-maps.
+ */
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}
+
 export interface SessionSummary {
   id: string;
   state: SessionState;
@@ -50,6 +62,9 @@ export interface SessionSummary {
   model: string;
   permissionMode: string;
   effort?: string;
+  /** BI-C5: from the session's last result event, when the SDK reported usage. */
+  usage?: SessionUsage;
+  total_cost_usd?: number;
 }
 
 export interface EventsPage {
@@ -104,6 +119,50 @@ export function formatAge(iso: string, now: Date = new Date()): string {
   if (mins < 60) return `${mins}m`;
   if (mins < 24 * 60) return `${Math.floor(mins / 60)}h`;
   return `${Math.floor(mins / (24 * 60))}d`;
+}
+
+/** BI-C5: read a `usage` object off a raw result event, defensively. */
+export function parseUsage(v: unknown): SessionUsage | null {
+  if (typeof v !== "object" || v === null) return null;
+  const u = v as Record<string, unknown>;
+  if (typeof u.input_tokens !== "number" || typeof u.output_tokens !== "number") return null;
+  const num = (x: unknown): number => (typeof x === "number" ? x : 0);
+  return {
+    input_tokens: u.input_tokens,
+    output_tokens: u.output_tokens,
+    cache_creation_input_tokens: num(u.cache_creation_input_tokens),
+    cache_read_input_tokens: num(u.cache_read_input_tokens),
+  };
+}
+
+/** Compact token count: 950 → "950", 12 345 → "12.3k", 2 400 000 → "2.4M". */
+export function formatTokenCount(n: number): string {
+  const compact = (v: number): string => {
+    const s = v.toFixed(1);
+    return s.endsWith(".0") ? s.slice(0, -2) : s;
+  };
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${compact(n / 1000)}k`;
+  return `${compact(n / 1_000_000)}M`;
+}
+
+/** "$0.43" for typical runs, three decimals below 10¢ so small runs don't read as free. */
+export function formatCost(usd: number): string {
+  return `$${usd.toFixed(usd < 0.1 ? 3 : 2)}`;
+}
+
+/**
+ * One-line usage summary for the done card, e.g.
+ * "1.2k in · 340 out · 88k cached · $0.43". Null when there is nothing to show.
+ */
+export function formatUsageLine(usage?: SessionUsage, totalCostUsd?: number): string | null {
+  const parts: string[] = [];
+  if (usage) {
+    parts.push(`${formatTokenCount(usage.input_tokens)} in`, `${formatTokenCount(usage.output_tokens)} out`);
+    if (usage.cache_read_input_tokens > 0) parts.push(`${formatTokenCount(usage.cache_read_input_tokens)} cached`);
+  }
+  if (typeof totalCostUsd === "number") parts.push(formatCost(totalCostUsd));
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export const POLL_INTERVAL_MS = 1500;

@@ -5,8 +5,12 @@ import {
   PERMISSION_MODES,
   POLL_INTERVAL_MS,
   formatAge,
+  formatCost,
+  formatTokenCount,
+  formatUsageLine,
   isTerminal,
   makeSessionsApi,
+  parseUsage,
   permissionModeLabel,
   startEventsPoll,
   type EventsPage,
@@ -266,5 +270,50 @@ describe("startEventsPoll", () => {
     jest.advanceTimersByTime(POLL_INTERVAL_MS * 5);
     await flush();
     expect(api.offsets).toEqual([0]);
+  });
+});
+
+describe("usage formatting (BI-C5)", () => {
+  it("parseUsage keeps only well-formed usage objects and defaults cache counters", () => {
+    expect(
+      parseUsage({ input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 5, cache_read_input_tokens: 6 }),
+    ).toEqual({ input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 5, cache_read_input_tokens: 6 });
+    expect(parseUsage({ input_tokens: 100, output_tokens: 20 })).toEqual({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    });
+    expect(parseUsage({ input_tokens: "lots", output_tokens: 20 })).toBeNull();
+    expect(parseUsage(undefined)).toBeNull();
+    expect(parseUsage("nope")).toBeNull();
+  });
+
+  it("formatTokenCount compacts to k/M and drops trailing .0", () => {
+    expect(formatTokenCount(950)).toBe("950");
+    expect(formatTokenCount(1000)).toBe("1k");
+    expect(formatTokenCount(12345)).toBe("12.3k");
+    expect(formatTokenCount(88000)).toBe("88k");
+    expect(formatTokenCount(2_400_000)).toBe("2.4M");
+  });
+
+  it("formatCost keeps small runs visible with a third decimal", () => {
+    expect(formatCost(0.4321)).toBe("$0.43");
+    expect(formatCost(1.5)).toBe("$1.50");
+    expect(formatCost(0.004)).toBe("$0.004");
+  });
+
+  it("formatUsageLine joins tokens, cache and cost; null when there is nothing", () => {
+    expect(
+      formatUsageLine(
+        { input_tokens: 1200, output_tokens: 340, cache_creation_input_tokens: 5000, cache_read_input_tokens: 88000 },
+        0.4321,
+      ),
+    ).toBe("1.2k in · 340 out · 88k cached · $0.43");
+    expect(
+      formatUsageLine({ input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }),
+    ).toBe("100 in · 20 out");
+    expect(formatUsageLine(undefined, 0.05)).toBe("$0.050");
+    expect(formatUsageLine(undefined, undefined)).toBeNull();
   });
 });
