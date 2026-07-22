@@ -5,13 +5,14 @@
 // the permission gate blocks any un-allowlisted command anyway.
 
 export interface ReviewBriefInput {
-  org: string;
+  /** Repo owner — the team org or the founder's user (MC-R2). */
+  owner: string;
   repo: string;
   pr: number;
 }
 
-export function buildReviewPrompt({ org, repo, pr }: ReviewBriefInput): string {
-  const slug = `${org}/${repo}`;
+export function buildReviewPrompt({ owner, repo, pr }: ReviewBriefInput): string {
+  const slug = `${owner}/${repo}`;
   return [
     `Run a READ-ONLY code review of pull request #${pr} in ${slug}.`,
     '',

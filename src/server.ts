@@ -57,8 +57,12 @@ export interface ServerConfig {
     reviews?: {
       /** GitHub org whose open PRs are listed (via gh, read-only). */
       org: string;
-      /** Local checkouts of review repos live at `{root}/{repo}`. */
+      /** Local checkouts of org review repos live at `{root}/{repo}`. */
       checkoutRoot: string;
+      /** MC-R2: GitHub user whose personal open PRs are listed too. */
+      ownUser: string;
+      /** MC-R2: personal-repo checkouts live at `{root}/{repo}`. */
+      ownRoot: string;
       /** Test seam: inject a fake gh runner. Production shells out to gh. */
       gh: GhRunner;
     };
@@ -165,6 +169,8 @@ export function buildServer(config: ServerConfig): FastifyInstance {
         token: config.sessions.token,
         org: config.sessions.reviews.org,
         checkoutRoot: config.sessions.reviews.checkoutRoot,
+        ownUser: config.sessions.reviews.ownUser,
+        ownRoot: config.sessions.reviews.ownRoot,
         gh: config.sessions.reviews.gh,
       });
     }

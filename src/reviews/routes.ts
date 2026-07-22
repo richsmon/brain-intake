@@ -4,8 +4,13 @@
 // the response's sessionId opens the existing session detail in the app.
 //
 // Local-checkout rule: POST /reviews only launches into a checkout that already
-// exists under `checkoutRoot` — a repo without one gets a 409 with the expected
-// path. This slice never clones anything.
+// exists under the owner's checkout root — a repo without one gets a 409 with
+// the expected path. This slice never clones anything.
+//
+// MC-R2: two owners. The team org's checkouts live under `checkoutRoot`
+// (`~/code/market-clue` by default); the founder's personal repos live under
+// `ownRoot` (`~/code` by default). POST /reviews accepts `owner` and defaults
+// to the org for backward compat with older app builds.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -21,12 +26,17 @@ export interface ReviewRoutesConfig {
   token: string;
   /** GitHub org whose open PRs the surface lists (e.g. `market-clue`). */
   org: string;
-  /** Local checkouts live at `{checkoutRoot}/{repo}` — nowhere else. */
+  /** Org checkouts live at `{checkoutRoot}/{repo}` — nowhere else. */
   checkoutRoot: string;
+  /** MC-R2: GitHub user whose personal open PRs are listed too (e.g. `richsmon`). */
+  ownUser: string;
+  /** MC-R2: personal-repo checkouts live at `{ownRoot}/{repo}`. */
+  ownRoot: string;
   gh: GhRunner;
 }
 
 interface PostReviewBody {
+  owner?: unknown;
   repo?: unknown;
   pr?: unknown;
   model?: unknown;
@@ -37,7 +47,13 @@ interface PostReviewBody {
 const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesConfig): void {
-  const { store, runner, token, org, checkoutRoot, gh } = config;
+  const { store, runner, token, org, checkoutRoot, ownUser, ownRoot, gh } = config;
+  // Map, not a plain object — `owner` comes from the request body and a plain
+  // object lookup would resolve prototype keys like `constructor`.
+  const rootByOwner = new Map<string, string>([
+    [org, checkoutRoot],
+    [ownUser, ownRoot],
+  ]);
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -51,7 +67,7 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
 
     scoped.get('/reviews/prs', async (_req, reply) => {
       try {
-        return await listOpenPrs(gh, org);
+        return await listOpenPrs(gh, org, ownUser);
       } catch (err) {
         app.log.error({ err }, 'gh PR listing failed');
         return reply.code(502).send({ error: 'gh unavailable' });
@@ -60,6 +76,12 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
 
     scoped.post('/reviews', async (req, reply) => {
       const body = (req.body ?? {}) as PostReviewBody;
+      // MC-R2: owner defaults to the org so pre-MC-R2 app builds keep working.
+      const owner = typeof body.owner === 'string' && body.owner !== '' ? body.owner : org;
+      const root = rootByOwner.get(owner);
+      if (root === undefined) {
+        return reply.code(400).send({ error: `unknown owner: ${owner}` });
+      }
       const repo = typeof body.repo === 'string' ? body.repo : '';
       if (!REPO_NAME.test(repo)) {
         return reply.code(400).send({ error: `invalid repo: ${repo || '(none)'}` });
@@ -69,10 +91,10 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
         return reply.code(400).send({ error: 'pr must be a positive integer' });
       }
 
-      const repoPath = join(checkoutRoot, repo);
+      const repoPath = join(root, repo);
       if (!existsSync(repoPath)) {
         return reply.code(409).send({
-          error: `no local checkout for ${org}/${repo} — expected ${repoPath}; clone it on the host first`,
+          error: `no local checkout for ${owner}/${repo} — expected ${repoPath}; clone it on the host first`,
         });
       }
 
@@ -80,9 +102,9 @@ export function registerReviewRoutes(app: FastifyInstance, config: ReviewRoutesC
       const effort = typeof body.effort === 'string' ? body.effort : undefined;
 
       const meta: SessionMeta = {
-        repo: `${org}/${repo}`,
+        repo: `${owner}/${repo}`,
         repoPath,
-        prompt: buildReviewPrompt({ org, repo, pr }),
+        prompt: buildReviewPrompt({ owner, repo, pr }),
         model,
         // Reviews are read-only by design — gated blocks every edit on approval.
         permissionMode: 'gated',

@@ -25,6 +25,7 @@ const mockLaunchReview = jest.fn(async () => ({ sessionId: "2026-07-22-rev1" }))
 const mockFakeApi = {
   reviewPrs: async () => [
     {
+      owner: "market-clue",
       repo: "platform",
       number: 94,
       title: "Harden dashboard aggregation",
@@ -35,6 +36,18 @@ const mockFakeApi = {
       deletions: 34,
     },
     {
+      owner: "richsmon",
+      repo: "brain-intake",
+      number: 13,
+      title: "Voice input for the New Session prompt",
+      author: "richsmon",
+      branch: "feat/voice-prompt",
+      updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+      additions: 320,
+      deletions: 12,
+    },
+    {
+      owner: "market-clue",
       repo: "app",
       number: 90,
       title: "Add login flow",
@@ -78,11 +91,13 @@ describe("ReviewsScreen", () => {
     getSessionsApiMock.mockResolvedValue(mockFakeApi);
   });
 
-  it("lists open PRs with repo, number, author, age and diff stats", async () => {
+  it("lists open PRs with owner/repo, number, author, age and diff stats", async () => {
     await renderReviews();
     expect(await screen.findByText("Harden dashboard aggregation")).toBeOnTheScreen();
-    expect(screen.getByText("platform #94")).toBeOnTheScreen();
-    expect(screen.getByText("app #90")).toBeOnTheScreen();
+    expect(screen.getByText("market-clue/platform #94")).toBeOnTheScreen();
+    expect(screen.getByText("market-clue/app #90")).toBeOnTheScreen();
+    // MC-R2: the founder's personal repos show up too, owner-tagged.
+    expect(screen.getByText("richsmon/brain-intake #13")).toBeOnTheScreen();
     expect(screen.getByText("palo-kunovsky")).toBeOnTheScreen();
     expect(screen.getByText("+1534")).toBeOnTheScreen();
     expect(screen.getByText("-34")).toBeOnTheScreen();
@@ -107,6 +122,7 @@ describe("ReviewsScreen", () => {
 
     await waitFor(() => expect(mockLaunchReview).toHaveBeenCalled());
     expect(mockLaunchReview).toHaveBeenCalledWith({
+      owner: "market-clue",
       repo: "platform",
       pr: 94,
       model: "claude-opus-4-8",
@@ -116,6 +132,19 @@ describe("ReviewsScreen", () => {
       pathname: "/session/[id]",
       params: { id: "2026-07-22-rev1" },
     });
+  });
+
+  it("launching a personal-repo review passes its owner through (MC-R2)", async () => {
+    await renderReviews();
+    await fireEvent.press(await screen.findByText("Voice input for the New Session prompt"));
+    await screen.findByText("Launch Review");
+    expect(screen.getByText("richsmon/brain-intake #13 · feat/voice-prompt")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByText("Launch review"));
+
+    await waitFor(() => expect(mockLaunchReview).toHaveBeenCalled());
+    expect(mockLaunchReview).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "richsmon", repo: "brain-intake", pr: 13 }),
+    );
   });
 
   it("surfaces the server's no-local-checkout 409 as a clear alert", async () => {
@@ -129,7 +158,7 @@ describe("ReviewsScreen", () => {
 
     await waitFor(() => expect(alertSpy).toHaveBeenCalled());
     expect(alertSpy.mock.calls[0][0]).toBe("No local checkout");
-    expect(alertSpy.mock.calls[0][1]).toContain("app");
+    expect(alertSpy.mock.calls[0][1]).toContain("market-clue/app");
     expect(mockPush).not.toHaveBeenCalled();
     alertSpy.mockRestore();
   });

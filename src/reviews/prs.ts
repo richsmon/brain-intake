@@ -1,9 +1,14 @@
 // MC-R1: open-PR listing across a GitHub org. One GraphQL search call via the
 // gh CLI returns every field the app's review list needs (branch + additions/
 // deletions included) — no per-PR follow-up requests.
+// MC-R2: the same single search also covers the founder's personal repos —
+// GitHub search ORs multiple org:/user: qualifiers in one query (verified live),
+// so it stays one call. Each row carries `owner` to disambiguate; `repo` stays
+// the short name for compatibility with the app.
 import type { GhRunner } from './gh.js';
 
 export interface ReviewPr {
+  owner: string;
   repo: string;
   number: number;
   title: string;
@@ -19,7 +24,7 @@ const SEARCH_QUERY = `query($q:String!){
     nodes{
       ... on PullRequest{
         number title headRefName updatedAt additions deletions
-        author{login} repository{name}
+        author{login} repository{name owner{login}}
       }
     }
   }
@@ -33,26 +38,34 @@ interface SearchNode {
   additions?: number;
   deletions?: number;
   author?: { login?: string } | null;
-  repository?: { name?: string };
+  repository?: { name?: string; owner?: { login?: string } };
 }
 
-/** Open PRs across `org`, newest activity first. Throws when gh fails. */
-export async function listOpenPrs(gh: GhRunner, org: string): Promise<ReviewPr[]> {
+/** Open PRs across `org` plus `user`'s personal repos (when given), newest
+ * activity first. Throws when gh fails. */
+export async function listOpenPrs(gh: GhRunner, org: string, user?: string): Promise<ReviewPr[]> {
+  const scope = user !== undefined && user !== '' ? `org:${org} user:${user}` : `org:${org}`;
   const stdout = await gh([
     'api',
     'graphql',
     '-f',
     `query=${SEARCH_QUERY}`,
     '-f',
-    `q=org:${org} is:pr is:open`,
+    `q=${scope} is:pr is:open`,
   ]);
   const parsed = JSON.parse(stdout) as {
     data?: { search?: { nodes?: SearchNode[] } };
   };
   const nodes = parsed.data?.search?.nodes ?? [];
   return nodes
-    .filter((n) => typeof n.number === 'number' && typeof n.repository?.name === 'string')
+    .filter(
+      (n) =>
+        typeof n.number === 'number' &&
+        typeof n.repository?.name === 'string' &&
+        typeof n.repository?.owner?.login === 'string',
+    )
     .map((n) => ({
+      owner: n.repository!.owner!.login!,
       repo: n.repository!.name!,
       number: n.number!,
       title: n.title ?? '',

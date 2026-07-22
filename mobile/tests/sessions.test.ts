@@ -102,9 +102,10 @@ describe("makeSessionsApi", () => {
     await expect(makeSessionsApi(BASE, "wrong", impl).list()).rejects.toThrow(ApiError);
   });
 
-  it("reviewPrs GETs the org PR list (MC-R1)", async () => {
+  it("reviewPrs GETs the owner-tagged PR list (MC-R1/MC-R2)", async () => {
     const prs = [
       {
+        owner: "market-clue",
         repo: "app",
         number: 90,
         title: "Add login flow",
@@ -124,6 +125,7 @@ describe("makeSessionsApi", () => {
   it("launchReview POSTs the pick and returns {sessionId} (MC-R1)", async () => {
     const { impl, calls } = fakeFetch(201, { sessionId: "2026-07-22-rev1" });
     const res = await makeSessionsApi(BASE, TOKEN, impl).launchReview({
+      owner: "market-clue",
       repo: "platform",
       pr: 94,
       model: "claude-opus-4-8",
@@ -133,6 +135,7 @@ describe("makeSessionsApi", () => {
     expect(calls[0].url).toBe("http://host:8787/reviews");
     expect(calls[0].init.method).toBe("POST");
     expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      owner: "market-clue",
       repo: "platform",
       pr: 94,
       model: "claude-opus-4-8",
@@ -143,6 +146,7 @@ describe("makeSessionsApi", () => {
   it("launchReview surfaces the no-checkout 409 as ApiError with status", async () => {
     const { impl } = fakeFetch(409, { error: "no local checkout" });
     const attempt = makeSessionsApi(BASE, TOKEN, impl).launchReview({
+      owner: "market-clue",
       repo: "data",
       pr: 1,
       model: "claude-sonnet-5",

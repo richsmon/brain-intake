@@ -38,6 +38,10 @@ export const DEFAULT_BASH_ALLOWLIST = [
  * the directory local checkouts live under (`{root}/{repo}`). */
 export const DEFAULT_REVIEWS_ORG = 'market-clue';
 
+/** MC-R2: the founder's personal repos ride the same PR list. Their checkouts
+ * live under `~/code/{repo}` by default (one level above the org root). */
+export const DEFAULT_REVIEWS_OWN_USER = 'richsmon';
+
 /** BI-C3: direct-APNs push config — all-or-nothing from APNS_* env vars. */
 export interface ApnsEnvConfig {
   /** Path to the APNs auth key (.p8) — NOT the ASC upload key. */
@@ -77,8 +81,12 @@ export interface AppConfig {
   apns?: ApnsEnvConfig;
   /** MC-R1: GitHub org the review surface lists open PRs for. */
   reviewsOrg: string;
-  /** MC-R1: local checkouts of review repos live at `{root}/{repo}`. */
+  /** MC-R1: local checkouts of org review repos live at `{root}/{repo}`. */
   reviewsCheckoutRoot: string;
+  /** MC-R2: GitHub user whose personal open PRs the surface also lists. */
+  reviewsOwnUser: string;
+  /** MC-R2: local checkouts of personal repos live at `{root}/{repo}`. */
+  reviewsOwnRoot: string;
 }
 
 function parseApns(env: Record<string, string | undefined>): ApnsEnvConfig | undefined {
@@ -184,6 +192,14 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       env.REVIEWS_CHECKOUT_ROOT !== undefined && env.REVIEWS_CHECKOUT_ROOT !== ''
         ? env.REVIEWS_CHECKOUT_ROOT
         : join(homedir(), 'code', DEFAULT_REVIEWS_ORG),
+    reviewsOwnUser:
+      env.REVIEWS_OWN_USER !== undefined && env.REVIEWS_OWN_USER !== ''
+        ? env.REVIEWS_OWN_USER
+        : DEFAULT_REVIEWS_OWN_USER,
+    reviewsOwnRoot:
+      env.REVIEWS_OWN_ROOT !== undefined && env.REVIEWS_OWN_ROOT !== ''
+        ? env.REVIEWS_OWN_ROOT
+        : join(homedir(), 'code'),
     ...(env.WHISPER_CMD !== undefined && env.WHISPER_CMD !== ''
       ? { whisperCmd: env.WHISPER_CMD }
       : {}),
