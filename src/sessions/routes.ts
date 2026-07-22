@@ -2,9 +2,13 @@
 // in spirit to the live server's Tailscale+token posture — every sessions
 // route requires `Authorization: Bearer <sessionsToken>`. Registered inside an
 // encapsulated plugin so the guard hook applies only to /sessions/*.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { SessionModel } from '../config.js';
 import type { PushTokenStore } from '../push/tokens.js';
+import { AUDIO_EXTS, transcribeAudio, type TranscribeDeps } from '../transcribe.js';
 import type { SessionPermissionMode } from './runner.js';
 import { sessionState, type SessionMeta, type SessionStore } from './store.js';
 
@@ -26,6 +30,11 @@ export interface SessionRoutesConfig {
   efforts: string[];
   /** BI-C3: device push-token registry behind `POST /push/register`. Absent ⇒ route not mounted. */
   pushTokens?: PushTokenStore;
+  /** BI-C6: dictation for prompt inputs — same WHISPER_CMD as the capture flow.
+   * Unset ⇒ `POST /sessions/transcribe` answers 503 and the app falls back to typing. */
+  whisperCmd?: string;
+  /** Test seam for the whisper shell-out. */
+  transcribeDeps?: TranscribeDeps;
 }
 
 interface PostSessionBody {
@@ -39,7 +48,7 @@ interface PostSessionBody {
 const MODES = new Set<string>(['gated', 'acceptEdits', 'auto'] satisfies SessionPermissionMode[]);
 
 export function registerSessionRoutes(app: FastifyInstance, config: SessionRoutesConfig): void {
-  const { store, runner, repoAllowlist, token, models, efforts, pushTokens } = config;
+  const { store, runner, repoAllowlist, token, models, efforts, pushTokens, whisperCmd, transcribeDeps } = config;
 
   void app.register((scoped, _opts, done) => {
     scoped.addHook('onRequest', (req, reply, next) => {
@@ -97,6 +106,36 @@ export function registerSessionRoutes(app: FastifyInstance, config: SessionRoute
         return reply.code(added ? 201 : 200).send({ ok: true });
       });
     }
+
+    // BI-C6: synchronous dictation — audio in, transcript out, nothing stored.
+    // The capture flow's STT is fire-and-forget (transcript lands on the inbox
+    // item's trail, never back at the phone); prompt dictation needs the text
+    // in the response, so it gets its own request/response endpoint over the
+    // same WHISPER_CMD machinery.
+    scoped.post('/sessions/transcribe', async (req, reply) => {
+      if (whisperCmd === undefined) {
+        return reply.code(503).send({ error: 'transcription unavailable: WHISPER_CMD unset' });
+      }
+      if (!req.isMultipart()) return reply.code(400).send({ error: 'multipart file required' });
+      const data = await req.file();
+      if (!data) return reply.code(400).send({ error: 'file part required' });
+      const ext = extname(data.filename).slice(1).toLowerCase();
+      if (!AUDIO_EXTS.has(ext)) {
+        return reply.code(400).send({ error: `not an audio extension: ${ext || '(none)'}` });
+      }
+      const buf = await data.toBuffer(); // throws 413 over the fileSize limit
+      const dir = mkdtempSync(join(tmpdir(), 'bi-dictation-'));
+      try {
+        const audioPath = join(dir, `audio.${ext}`);
+        writeFileSync(audioPath, buf);
+        const text = await transcribeAudio(audioPath, whisperCmd, transcribeDeps);
+        return { text };
+      } catch {
+        return reply.code(502).send({ error: 'transcription failed' });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
 
     // BI-C2: single source for the app's pickers — repos, models, efforts from config.
     scoped.get('/sessions/meta', async () => ({
