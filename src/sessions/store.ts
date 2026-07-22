@@ -152,8 +152,9 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** BI-C5: read a `usage` object off a stored result event, defensively. */
-function toUsage(v: unknown): SessionUsage | null {
+/** BI-C5: read a `usage` object off a stored result event, defensively.
+ * Exported since BI-C8 — the usage aggregation applies the same rule. */
+export function toUsage(v: unknown): SessionUsage | null {
   if (typeof v !== 'object' || v === null) return null;
   const u = v as Record<string, unknown>;
   if (typeof u.input_tokens !== 'number' || typeof u.output_tokens !== 'number') return null;
