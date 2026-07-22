@@ -93,7 +93,27 @@ function toSessionMessage(message: SDKMessage): SessionSdkMessage {
       subtype: message.subtype,
       is_error: message.is_error,
       ...('result' in message && typeof message.result === 'string' ? { result: message.result } : {}),
+      // BI-C5: mirror the SDK's usage honestly — both result variants carry
+      // `usage` (BetaUsage, snake_case) and `total_cost_usd`. We keep the four
+      // token counters; the SDK's extra usage fields (iterations, service_tier,
+      // server_tool_use, …) are not ours to reinterpret.
+      ...(message.usage !== undefined
+        ? {
+            usage: {
+              input_tokens: num(message.usage.input_tokens),
+              output_tokens: num(message.usage.output_tokens),
+              cache_creation_input_tokens: num(message.usage.cache_creation_input_tokens),
+              cache_read_input_tokens: num(message.usage.cache_read_input_tokens),
+            },
+          }
+        : {}),
+      ...(typeof message.total_cost_usd === 'number' ? { total_cost_usd: message.total_cost_usd } : {}),
     };
   }
   return { type: message.type };
+}
+
+/** Runtime guard: the types promise numbers, but a NaN/null must never reach the JSONL. */
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }

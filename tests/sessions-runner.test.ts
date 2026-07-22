@@ -394,6 +394,65 @@ describe('runner — real-SDK shape: query stays open after the result (BI-C2)',
   });
 });
 
+describe('runner — per-run token usage (BI-C5)', () => {
+  const USAGE = {
+    input_tokens: 1200,
+    output_tokens: 340,
+    cache_creation_input_tokens: 5000,
+    cache_read_input_tokens: 88000,
+  };
+
+  test('usage + total_cost_usd from the SDK result land on the result event and the list payload', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const { sdk } = fakeSdk(async ({ emit }) => {
+      emit(text('done'));
+      emit({ type: 'result', subtype: 'success', usage: USAGE, total_cost_usd: 0.4321 });
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    await runner.run(id, META);
+
+    const result = store.readEvents(id).find((e) => e.event === 'result');
+    expect(result).toMatchObject({ outcome: 'success', usage: USAGE, total_cost_usd: 0.4321 });
+    expect(store.listSessions()[0]).toMatchObject({ state: 'done', usage: USAGE, total_cost_usd: 0.4321 });
+  });
+
+  test('multi-turn: the LAST result wins — the SDK reports session-cumulative usage, never summed', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const { sdk } = fakeSdk(async ({ emit, readMessage }) => {
+      await readMessage(); // initial prompt
+      emit({ type: 'result', subtype: 'success', usage: { ...USAGE, input_tokens: 100, output_tokens: 20 }, total_cost_usd: 0.01 });
+      await readMessage(); // queued follow-up
+      emit({ type: 'result', subtype: 'success', usage: USAGE, total_cost_usd: 0.4321 });
+      while ((await readMessage()) !== null) {
+        /* drain */
+      }
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    const runPromise = runner.run(id, META);
+    expect(runner.sendMessage(id, 'one more thing')).toBe(true);
+    await runPromise;
+
+    const result = store.readEvents(id).find((e) => e.event === 'result');
+    expect(result).toMatchObject({ usage: USAGE, total_cost_usd: 0.4321 });
+  });
+
+  test('a result without usage keeps the fields off the event (old logs stay valid)', async () => {
+    const store = tmpStore();
+    const id = store.createSession(META);
+    const { sdk } = fakeSdk(async ({ emit }) => {
+      emit(ok());
+    });
+    const runner = new SessionRunner({ store, sdk, bashAllowlist: [], approvalTimeoutMs: 1000 });
+    await runner.run(id, META);
+
+    const result = store.readEvents(id).find((e) => e.event === 'result')!;
+    expect('usage' in result).toBe(false);
+    expect('total_cost_usd' in result).toBe(false);
+  });
+});
+
 describe('runner — SDK throws', () => {
   test('an error inside the query is captured as result:error + status error', async () => {
     const store = tmpStore();

@@ -13,7 +13,7 @@
 // approvalTimeoutMs is auto-denied and the session is PAUSED (never killed).
 // Mode flip and follow-up messages feed the running session (streaming input).
 import { randomBytes } from 'node:crypto';
-import type { SessionEvent, SessionMeta, SessionStore } from './store.js';
+import type { SessionEvent, SessionMeta, SessionStore, SessionUsage } from './store.js';
 
 /** Adapter surface the runner needs from the Agent SDK — see sdk.ts for the real binding. */
 export interface SessionPermissionResult {
@@ -39,6 +39,9 @@ export interface SessionSdkMessage {
   subtype?: string;
   is_error?: boolean;
   result?: string;
+  /** BI-C5: on `result` messages — token usage mirrored from the SDK (snake_case as it sends it). */
+  usage?: SessionUsage;
+  total_cost_usd?: number;
 }
 
 export interface SessionSdkQueryOptions {
@@ -203,6 +206,8 @@ export class SessionRunner {
 
       let outcome: 'success' | 'error' = 'success';
       let summary = '';
+      let usage: SessionUsage | undefined;
+      let totalCostUsd: number | undefined;
       for await (const message of query) {
         if (message.type === 'assistant') {
           for (const block of message.message?.content ?? []) {
@@ -215,6 +220,10 @@ export class SessionRunner {
             ? 'error'
             : 'success';
           if (typeof message.result === 'string') summary = message.result;
+          // BI-C5: the SDK reports session-cumulative usage/cost on every
+          // result — keep the latest, never sum (summing would double-count).
+          if (message.usage !== undefined) usage = message.usage;
+          if (typeof message.total_cost_usd === 'number') totalCostUsd = message.total_cost_usd;
           // BI-C2: the real SDK (streaming input) keeps the query open for more
           // input after a turn's result. With nothing queued and no gate pending
           // the session is finished — close the input so the query ends and the
@@ -226,7 +235,13 @@ export class SessionRunner {
         }
       }
 
-      store.appendEvent(id, { event: 'result', outcome, ...(summary ? { summary } : {}) });
+      store.appendEvent(id, {
+        event: 'result',
+        outcome,
+        ...(summary ? { summary } : {}),
+        ...(usage !== undefined ? { usage } : {}),
+        ...(totalCostUsd !== undefined ? { total_cost_usd: totalCostUsd } : {}),
+      });
       // A gate that timed out already paused the session — leave it paused, never revive to done.
       const paused = store.readEvents(id).some((e) => e.event === 'status' && e.status === 'paused');
       if (!paused) {
