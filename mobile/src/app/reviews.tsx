@@ -148,6 +148,12 @@ function LaunchSheet({
                   {pr.owner}/{pr.repo} #{pr.number} · {pr.branch}
                 </Text>
                 <Text style={[styles.rowTitle, { color: colors.ink1 }]}>{pr.title}</Text>
+                {/* MC-R6: say up front which flow the launch runs. */}
+                {pr.fullReview === true ? (
+                  <Text style={[styles.rowMono, { color: colors.accent }]}>
+                    Full review — review doc lands as a brain PR, feedback goes on this PR
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -238,9 +244,16 @@ export default function ReviewsScreen() {
                 pressed && { backgroundColor: colors.bgSurface2 },
               ]}
             >
-              <Text style={[styles.rowMono, { color: colors.ink3 }]}>
-                {item.owner}/{item.repo} #{item.number}
-              </Text>
+              <View style={styles.rowMeta}>
+                <Text style={[styles.rowMono, { color: colors.ink3 }]}>
+                  {item.owner}/{item.repo} #{item.number}
+                </Text>
+                {/* MC-R6: org PRs launch the full flow — label them so the
+                    quick-look rows (absent/false flag) stay visibly different. */}
+                {item.fullReview === true ? (
+                  <Text style={[styles.rowMono, { color: colors.accent }]}>Full review</Text>
+                ) : null}
+              </View>
               <Text numberOfLines={2} style={[styles.rowTitle, { color: colors.ink1 }]}>
                 {item.title}
               </Text>

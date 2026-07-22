@@ -11,10 +11,12 @@ import {
   formatUsageLine,
   isTerminal,
   makeSessionsApi,
+  parseBrainPrUrl,
   parseFindingsPayload,
   parseUsage,
   permissionModeLabel,
   startEventsPoll,
+  stripBrainPrLine,
   stripFindingsBlock,
   type EventsPage,
 } from "../src/lib/sessions";
@@ -284,6 +286,43 @@ describe("stripFindingsBlock (MC-R4)", () => {
   });
   it("leaves block-less text untouched", () => {
     expect(stripFindingsBlock("Just a summary.")).toBe("Just a summary.");
+  });
+});
+
+describe("parseBrainPrUrl / stripBrainPrLine (MC-R6)", () => {
+  const summary = [
+    "**Verdict** — approve.",
+    "",
+    "Brain PR: https://github.com/market-clue/brain/pull/12",
+    "",
+    '```findings-json\n{"verdict": "approve", "findings": []}\n```',
+  ].join("\n");
+
+  it("pulls the URL off the stable Brain PR line", () => {
+    expect(parseBrainPrUrl(summary)).toBe("https://github.com/market-clue/brain/pull/12");
+  });
+
+  it("parses defensively: angle brackets and trailing punctuation are trimmed", () => {
+    expect(parseBrainPrUrl("Brain PR: <https://github.com/market-clue/brain/pull/12>")).toBe(
+      "https://github.com/market-clue/brain/pull/12",
+    );
+    expect(parseBrainPrUrl("  Brain PR: https://github.com/market-clue/brain/pull/12.")).toBe(
+      "https://github.com/market-clue/brain/pull/12",
+    );
+  });
+
+  it("junk yields null — no line, non-GitHub URL, bare host", () => {
+    expect(parseBrainPrUrl("All done, nothing to link.")).toBeNull();
+    expect(parseBrainPrUrl("Brain PR: http://example.com/x")).toBeNull();
+    expect(parseBrainPrUrl("Brain PR: https://github.com/")).toBeNull();
+    // Not on its own line ⇒ not the stable form.
+    expect(parseBrainPrUrl("see Brain PR: https://github.com/market-clue/brain/pull/12 later")).toBeNull();
+  });
+
+  it("stripBrainPrLine removes exactly that line and trims", () => {
+    const stripped = stripBrainPrLine("Prose.\nBrain PR: https://github.com/market-clue/brain/pull/12\nMore.");
+    expect(stripped).toBe("Prose.\n\nMore.");
+    expect(stripBrainPrLine("No line here.")).toBe("No line here.");
   });
 });
 

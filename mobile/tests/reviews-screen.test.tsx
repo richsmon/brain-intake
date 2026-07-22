@@ -34,6 +34,8 @@ const mockFakeApi = {
       updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
       additions: 1534,
       deletions: 34,
+      // MC-R6: org rows launch the full flow — the server tags them.
+      fullReview: true,
       // MC-R3: this PR already has a review session — the row remembers it.
       // MC-R4: the review produced structured findings — the row says so.
       lastReview: {
@@ -55,6 +57,8 @@ const mockFakeApi = {
       additions: 320,
       deletions: 12,
       lastReview: null,
+      // MC-R6: personal repos stay the read-only quick look.
+      fullReview: false,
     },
     {
       owner: "market-clue",
@@ -113,6 +117,27 @@ describe("ReviewsScreen", () => {
     expect(screen.getByText("-34")).toBeOnTheScreen();
     expect(screen.getByText("3h")).toBeOnTheScreen();
     expect(screen.getByText("2d")).toBeOnTheScreen();
+  });
+
+  it("labels full-review rows; quick-look and pre-MC-R6 rows stay unlabeled (MC-R6)", async () => {
+    await renderReviews();
+    await screen.findByText("Harden dashboard aggregation");
+    // Only platform#94 carries fullReview: true. richsmon#13 is false, and
+    // app#90 (field absent — old server) defensively stays a quick look.
+    expect(screen.getAllByText("Full review")).toHaveLength(1);
+  });
+
+  it("the launch sheet says a full review lands a brain PR (MC-R6)", async () => {
+    await renderReviews();
+    await fireEvent.press(await screen.findByText("Harden dashboard aggregation"));
+    await screen.findByText("Launch Review");
+    expect(screen.getByText(/review doc lands as a brain PR/)).toBeOnTheScreen();
+
+    // richsmon rows: no full-review copy anywhere in the sheet.
+    await fireEvent.press(screen.getByText("Close"));
+    await fireEvent.press(await screen.findByText("Voice input for the New Session prompt"));
+    await screen.findByText("Launch Review");
+    expect(screen.queryByText(/brain PR/)).toBeNull();
   });
 
   it("marks already-reviewed PRs with a reviewed line; unreviewed rows stay clean (MC-R3)", async () => {

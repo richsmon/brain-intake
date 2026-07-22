@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { Linking } from "react-native";
 
 import SessionDetailScreen, { deriveSession } from "../src/app/session/[id]";
 import { getSessionsApi } from "../src/lib/brain";
@@ -276,6 +277,47 @@ describe("SessionDetailScreen", () => {
     expect(screen.queryByText(/finding/)).toBeNull();
   });
 
+  it("a full review's done card links the brain PR and opens it on tap (MC-R6)", async () => {
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true as never);
+    mockState = "done";
+    mockEvents = [
+      { ...created, review: { owner: "market-clue", repo: "app", pr: 90 } },
+      { index: 1, event: "status", status: "running" },
+      {
+        index: 2,
+        event: "result",
+        outcome: "success",
+        summary:
+          "**Verdict** — approve.\n\nBrain PR: https://github.com/market-clue/brain/pull/12\n\n" +
+          '```findings-json\n{"verdict": "approve", "findings": []}\n```',
+        findings: { verdict: "approve", findings: [] },
+      },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    const link = await screen.findByText("Brain PR → https://github.com/market-clue/brain/pull/12");
+    expect(link).toBeOnTheScreen();
+    // The raw line left the prose — the link renders it.
+    expect(screen.queryByText(/^Brain PR: /)).toBeNull();
+
+    await fireEvent.press(link);
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/market-clue/brain/pull/12");
+    openUrl.mockRestore();
+  });
+
+  it("richsmon quick looks stay linkless — no Brain PR line, no link card (MC-R6)", async () => {
+    mockState = "done";
+    mockEvents = [
+      { ...created, review: { owner: "richsmon", repo: "brain-intake", pr: 13 } },
+      { index: 1, event: "status", status: "running" },
+      { index: 2, event: "result", outcome: "success", summary: "Looks fine overall.", findings: null },
+      { index: 3, event: "status", status: "done" },
+    ];
+    await renderDetail();
+    expect(await screen.findByText("Looks fine overall.")).toBeOnTheScreen();
+    expect(screen.queryByText(/Brain PR/)).toBeNull();
+  });
+
   it("a result without usage renders no token line (BI-C5)", async () => {
     mockState = "done";
     mockEvents = [
@@ -291,6 +333,31 @@ describe("SessionDetailScreen", () => {
 });
 
 describe("deriveSession", () => {
+  it("result items parse the Brain PR line into brainPrUrl and strip it from the summary (MC-R6)", () => {
+    const derived = deriveSession([
+      created,
+      {
+        index: 1,
+        event: "result",
+        outcome: "success",
+        summary: "Prose.\nBrain PR: https://github.com/market-clue/brain/pull/12\nMore prose.",
+      },
+    ] as SessionEvent[]);
+    expect(derived.items.find((i) => i.type === "result")).toMatchObject({
+      brainPrUrl: "https://github.com/market-clue/brain/pull/12",
+      summary: "Prose.\n\nMore prose.",
+    });
+
+    // No line ⇒ no key, summary untouched.
+    const plain = deriveSession([
+      created,
+      { index: 1, event: "result", outcome: "success", summary: "Just done." },
+    ] as SessionEvent[]);
+    const item = plain.items.find((i) => i.type === "result")!;
+    expect("brainPrUrl" in item).toBe(false);
+    expect(item).toMatchObject({ summary: "Just done." });
+  });
+
   it("denied edits are excluded from the diff stat and gates fold their resolution", () => {
     const derived = deriveSession([
       created,
