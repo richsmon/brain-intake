@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 
 import CodingScreen from "../src/app/(tabs)/coding";
+import { ApiError } from "../src/lib/api";
 import { getSessionsApi } from "../src/lib/brain";
 import { ThemeProvider } from "../src/theme";
 
@@ -19,6 +20,22 @@ jest.mock("expo-router", () => {
 });
 
 const mockCreate = jest.fn(async () => ({ id: "2026-07-22-new1" }));
+const mockTranscribe = jest.fn(async () => ({ text: "dictated words" }));
+
+// BI-C6: the sheet embeds DictationButton, which records via expo-audio.
+const mockRecorder = {
+  record: jest.fn(),
+  stop: jest.fn(async () => undefined),
+  prepareToRecordAsync: jest.fn(async () => undefined),
+  uri: "file:///recordings/dictation.m4a",
+  currentTime: 0,
+};
+
+jest.mock("expo-audio", () => ({
+  RecordingPresets: { HIGH_QUALITY: {} },
+  requestRecordingPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  useAudioRecorder: () => mockRecorder,
+}));
 
 const mockFakeApi = {
   list: async () => [
@@ -56,6 +73,7 @@ const mockFakeApi = {
     efforts: ["low", "medium", "high", "xhigh", "max"],
   }),
   create: mockCreate,
+  transcribe: mockTranscribe,
 };
 
 jest.mock("../src/lib/brain", () => ({
@@ -76,6 +94,7 @@ describe("CodingScreen", () => {
   beforeEach(() => {
     mockPush.mockClear();
     mockCreate.mockClear();
+    mockTranscribe.mockClear();
     getSessionsApiMock.mockResolvedValue(mockFakeApi);
   });
 
@@ -160,6 +179,34 @@ describe("CodingScreen", () => {
       model: "claude-fable-5",
       permissionMode: "auto",
     });
+  });
+
+  it("dictates into the prompt: mic → stop → transcript appended, still editable (BI-C6)", async () => {
+    await renderCoding();
+    await fireEvent.press(await screen.findByText("+ New"));
+    await screen.findByText("New Session");
+
+    const promptInput = screen.getByPlaceholderText("What should the agent do?");
+    await fireEvent.changeText(promptInput, "First part.");
+    await fireEvent.press(screen.getByLabelText("Dictate"));
+    await fireEvent.press(await screen.findByLabelText("Stop dictation"));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalled());
+    // Transcript appends to the typed text in the same editable field.
+    await waitFor(() => expect(promptInput.props.value).toBe("First part. dictated words"));
+  });
+
+  it("shows the dictation failure inline and leaves the typed prompt untouched (BI-C6)", async () => {
+    mockTranscribe.mockRejectedValueOnce(new ApiError("http", 503));
+    await renderCoding();
+    await fireEvent.press(await screen.findByText("+ New"));
+    await screen.findByText("New Session");
+
+    const promptInput = screen.getByPlaceholderText("What should the agent do?");
+    await fireEvent.changeText(promptInput, "typed by hand");
+    await fireEvent.press(screen.getByLabelText("Dictate"));
+    await fireEvent.press(await screen.findByLabelText("Stop dictation"));
+    expect(await screen.findByText("Dictation isn't set up on the mini — type it instead.")).toBeOnTheScreen();
+    expect(promptInput.props.value).toBe("typed by hand");
   });
 
   it("defaults to gated mode and requires repo + prompt before starting", async () => {
