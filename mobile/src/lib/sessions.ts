@@ -92,8 +92,11 @@ export interface CreateSessionInput {
   permissionMode?: PermissionMode;
 }
 
-/** MC-R1: one open PR in the review surface's org list (GET /reviews/prs). */
+/** MC-R1: one open PR in the review surface's list (GET /reviews/prs).
+ * MC-R2: the list spans the team org and the founder's personal repos, so
+ * each row carries `owner`; `repo` stays the short name. */
 export interface ReviewPr {
+  owner: string;
   repo: string;
   number: number;
   title: string;
@@ -104,8 +107,10 @@ export interface ReviewPr {
   deletions: number;
 }
 
-/** MC-R1: POST /reviews — the server launches a review as a coding session. */
+/** MC-R1: POST /reviews — the server launches a review as a coding session.
+ * MC-R2: `owner` picks the checkout root server-side (org vs personal). */
 export interface LaunchReviewInput {
+  owner: string;
   repo: string;
   pr: number;
   model: string;
