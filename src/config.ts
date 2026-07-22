@@ -31,6 +31,20 @@ export const DEFAULT_BASH_ALLOWLIST = [
   'pytest',
 ];
 
+/** BI-C3: direct-APNs push config — all-or-nothing from APNS_* env vars. */
+export interface ApnsEnvConfig {
+  /** Path to the APNs auth key (.p8) — NOT the ASC upload key. */
+  keyPath: string;
+  keyId: string;
+  teamId: string;
+  /** apns-topic = bundle id. */
+  topic: string;
+  /** Optional override, e.g. the sandbox endpoint for dev builds. */
+  endpoint?: string;
+}
+
+export const DEFAULT_APNS_TOPIC = 'com.richsmon.brain-intake';
+
 export interface AppConfig {
   brainRoot: string;
   /** IN-5: raw captures live here, OUTSIDE the git repo. */
@@ -52,6 +66,26 @@ export interface AppConfig {
   sessionModels: SessionModel[];
   /** BI-C2: effort picker values served by `GET /sessions/meta`. */
   sessionEfforts: string[];
+  /** BI-C3: direct-APNs push. Unset ⇒ pushes are a silent no-op. */
+  apns?: ApnsEnvConfig;
+}
+
+function parseApns(env: Record<string, string | undefined>): ApnsEnvConfig | undefined {
+  const keyPath = env.APNS_KEY_PATH;
+  if (keyPath === undefined || keyPath === '') return undefined;
+  if (!existsSync(keyPath)) throw new Error(`APNS_KEY_PATH does not exist: ${keyPath}`);
+  const keyId = env.APNS_KEY_ID;
+  const teamId = env.APNS_TEAM_ID;
+  if (keyId === undefined || keyId === '' || teamId === undefined || teamId === '') {
+    throw new Error('APNS_KEY_PATH is set — APNS_KEY_ID and APNS_TEAM_ID are required with it');
+  }
+  return {
+    keyPath,
+    keyId,
+    teamId,
+    topic: env.APNS_TOPIC !== undefined && env.APNS_TOPIC !== '' ? env.APNS_TOPIC : DEFAULT_APNS_TOPIC,
+    ...(env.APNS_ENDPOINT !== undefined && env.APNS_ENDPOINT !== '' ? { endpoint: env.APNS_ENDPOINT } : {}),
+  };
 }
 
 function parseSessionModels(raw: string): SessionModel[] {
@@ -140,5 +174,9 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     ...(env.SESSIONS_TOKEN !== undefined && env.SESSIONS_TOKEN !== ''
       ? { sessionsToken: env.SESSIONS_TOKEN }
       : {}),
+    ...((): { apns?: ApnsEnvConfig } => {
+      const apns = parseApns(env);
+      return apns !== undefined ? { apns } : {};
+    })(),
   };
 }

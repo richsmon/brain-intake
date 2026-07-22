@@ -1,11 +1,16 @@
-// BI-C3: Expo push sender. Plain fetch against the Expo push HTTP API — no
-// SDK dependency; fetch is injected for tests. A send NEVER throws and NEVER
-// blocks a session: zero registered tokens ⇒ silent no-op, transport or
-// ticket errors ⇒ onError log only. `DeviceNotRegistered` tickets evict the
-// dead token so the registry self-heals.
+// BI-C3 (direct APNs): session push sender. Formats the alert payload and
+// delivers to every registered device token via ApnsClient. A send NEVER
+// throws and NEVER blocks a session: no client configured (no .p8 key yet) or
+// zero registered tokens ⇒ silent no-op, transport errors ⇒ onError log only.
+// APNs 410 `Unregistered` (and 400 `BadDeviceToken`) evict the dead token so
+// the registry self-heals.
+//
+// Custom payload carries the deeplink twice — top-level `url` (direct-APNs
+// convention, exposed via the notification trigger payload) AND `body: {url}`
+// (the key expo-notifications maps into `request.content.data` on iOS) — so
+// the app reads it regardless of expo-notifications version.
+import type { ApnsClient } from './apns.js';
 import type { PushTokenStore } from './tokens.js';
-
-export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 export interface PushMessage {
   title: string;
@@ -15,62 +20,59 @@ export interface PushMessage {
 
 export interface PushSenderConfig {
   tokens: PushTokenStore;
-  fetchImpl?: typeof fetch;
+  /** Absent ⇒ push not configured ⇒ every send is a silent no-op. */
+  client?: ApnsClient;
   onError?: (err: unknown) => void;
 }
 
-interface PushTicket {
-  status?: string;
-  details?: { error?: string };
+/** APNs alert payload for a session push. Exported for tests. */
+export function apnsPayload(message: PushMessage): Record<string, unknown> {
+  return {
+    aps: { alert: { title: message.title, body: message.body }, sound: 'default' },
+    ...(message.data !== undefined ? { ...message.data, body: message.data } : {}),
+  };
+}
+
+function isGoneToken(status: number, body: string): boolean {
+  if (status === 410) return true;
+  if (status !== 400) return false;
+  try {
+    return (JSON.parse(body) as { reason?: string }).reason === 'BadDeviceToken';
+  } catch {
+    return false;
+  }
 }
 
 export class PushSender {
   private readonly tokens: PushTokenStore;
-  private readonly fetchImpl: typeof fetch;
+  private readonly client: ApnsClient | undefined;
   private readonly onError: (err: unknown) => void;
 
   constructor(config: PushSenderConfig) {
     this.tokens = config.tokens;
-    this.fetchImpl = config.fetchImpl ?? fetch;
+    this.client = config.client;
     this.onError = config.onError ?? ((): void => {});
   }
 
   /** One push to every registered device. Resolves on completion; never rejects. */
   async send(message: PushMessage): Promise<void> {
+    if (this.client === undefined) return;
     const to = this.tokens.list();
     if (to.length === 0) return;
 
-    try {
-      const res = await this.fetchImpl(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify(
-          to.map((token) => ({
-            to: token,
-            title: message.title,
-            body: message.body,
-            sound: 'default',
-            ...(message.data !== undefined ? { data: message.data } : {}),
-          })),
-        ),
-      });
-      if (!res.ok) {
-        this.onError(new Error(`expo push API returned ${res.status}`));
-        return;
-      }
-      const payload = (await res.json()) as { data?: PushTicket[] };
-      const tickets = Array.isArray(payload.data) ? payload.data : [];
-      tickets.forEach((ticket, i) => {
-        if (ticket.status !== 'error') return;
-        const token = to[i];
-        if (ticket.details?.error === 'DeviceNotRegistered' && token !== undefined) {
-          this.tokens.remove(token);
+    const payload = apnsPayload(message);
+    for (const deviceToken of to) {
+      try {
+        const res = await this.client.deliver(deviceToken, payload);
+        if (res.status === 200) continue;
+        if (isGoneToken(res.status, res.body)) {
+          this.tokens.remove(deviceToken);
         } else {
-          this.onError(new Error(`expo push ticket error: ${ticket.details?.error ?? 'unknown'}`));
+          this.onError(new Error(`APNs ${res.status}: ${res.body || '(empty body)'}`));
         }
-      });
-    } catch (err) {
-      this.onError(err);
+      } catch (err) {
+        this.onError(err);
+      }
     }
   }
 }
